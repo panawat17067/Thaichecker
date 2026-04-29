@@ -7,6 +7,12 @@ type Piece = { player: Player; king: boolean }
 type Pos = { r: number; c: number }
 
 const BOARD = 8
+const kingDirs = [
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+]
 
 function initBoard() {
   const b: (Piece | null)[][] = Array.from({ length: BOARD }, () =>
@@ -15,17 +21,13 @@ function initBoard() {
 
   for (let r = 0; r < 2; r++) {
     for (let c = 0; c < BOARD; c++) {
-      if ((r + c) % 2 === 1) {
-        b[r][c] = { player: 'black', king: false }
-      }
+      if ((r + c) % 2 === 1) b[r][c] = { player: 'black', king: false }
     }
   }
 
   for (let r = 6; r < 8; r++) {
     for (let c = 0; c < BOARD; c++) {
-      if ((r + c) % 2 === 1) {
-        b[r][c] = { player: 'white', king: false }
-      }
+      if ((r + c) % 2 === 1) b[r][c] = { player: 'white', king: false }
     }
   }
 
@@ -39,16 +41,7 @@ function clone(board: (Piece | null)[][]) {
 const inb = (r: number, c: number) =>
   r >= 0 && r < BOARD && c >= 0 && c < BOARD
 
-function dirs(piece: Piece) {
-  if (piece.king) {
-    return [
-      [1, 1],
-      [1, -1],
-      [-1, 1],
-      [-1, -1],
-    ]
-  }
-
+function manDirs(piece: Piece) {
   return piece.player === 'black'
     ? [
         [1, 1],
@@ -66,18 +59,71 @@ function jumpMoves(board: (Piece | null)[][], from: Pos): Pos[] {
 
   const out: Pos[] = []
 
-  for (const [dr, dc] of dirs(piece)) {
-    const mr = from.r + dr
-    const mc = from.c + dc
-    const tr = from.r + dr * 2
-    const tc = from.c + dc * 2
+  if (!piece.king) {
+    for (const [dr, dc] of manDirs(piece)) {
+      const mr = from.r + dr
+      const mc = from.c + dc
+      const tr = from.r + dr * 2
+      const tc = from.c + dc * 2
 
-    if (!inb(mr, mc) || !inb(tr, tc) || board[tr][tc]) continue
+      if (!inb(mr, mc) || !inb(tr, tc) || board[tr][tc]) continue
 
-    const mid = board[mr][mc]
+      const mid = board[mr][mc]
+      if (mid && mid.player !== piece.player) out.push({ r: tr, c: tc })
+    }
 
-    if (mid && mid.player !== piece.player) {
-      out.push({ r: tr, c: tc })
+    return out
+  }
+
+  for (const [dr, dc] of kingDirs) {
+    let r = from.r + dr
+    let c = from.c + dc
+
+    while (inb(r, c) && !board[r][c]) {
+      r += dr
+      c += dc
+    }
+
+    if (!inb(r, c)) continue
+
+    const target = board[r][c]
+    if (!target || target.player === piece.player) continue
+
+    const landR = r + dr
+    const landC = c + dc
+
+    if (inb(landR, landC) && !board[landR][landC]) {
+      out.push({ r: landR, c: landC })
+    }
+  }
+
+  return out
+}
+
+function stepMoves(board: (Piece | null)[][], from: Pos): Pos[] {
+  const piece = board[from.r][from.c]
+  if (!piece) return []
+
+  const out: Pos[] = []
+
+  if (!piece.king) {
+    for (const [dr, dc] of manDirs(piece)) {
+      const nr = from.r + dr
+      const nc = from.c + dc
+      if (inb(nr, nc) && !board[nr][nc]) out.push({ r: nr, c: nc })
+    }
+
+    return out
+  }
+
+  for (const [dr, dc] of kingDirs) {
+    let r = from.r + dr
+    let c = from.c + dc
+
+    while (inb(r, c) && !board[r][c]) {
+      out.push({ r, c })
+      r += dr
+      c += dc
     }
   }
 
@@ -90,7 +136,6 @@ function allCaptureStarts(board: (Piece | null)[][], turn: Player): Pos[] {
   for (let r = 0; r < BOARD; r++) {
     for (let c = 0; c < BOARD; c++) {
       const piece = board[r][c]
-
       if (
         piece &&
         piece.player === turn &&
@@ -102,6 +147,31 @@ function allCaptureStarts(board: (Piece | null)[][], turn: Player): Pos[] {
   }
 
   return starts
+}
+
+function capturedBetween(
+  board: (Piece | null)[][],
+  from: Pos,
+  to: Pos
+): Pos | null {
+  const dr = Math.sign(to.r - from.r)
+  const dc = Math.sign(to.c - from.c)
+
+  let r = from.r + dr
+  let c = from.c + dc
+  let found: Pos | null = null
+
+  while (r !== to.r && c !== to.c) {
+    if (board[r][c]) {
+      if (found) return null
+      found = { r, c }
+    }
+
+    r += dr
+    c += dc
+  }
+
+  return found
 }
 
 export default function Home() {
@@ -123,58 +193,51 @@ export default function Home() {
     if (forced && (forced.r !== from.r || forced.c !== from.c)) return []
 
     const jumps = jumpMoves(board, from)
-
     if (captureStarts.length > 0) return jumps
 
-    const steps: Pos[] = []
+    return stepMoves(board, from)
+  }
 
-    for (const [dr, dc] of dirs(piece)) {
-      const nr = from.r + dr
-      const nc = from.c + dc
-
-      if (inb(nr, nc) && !board[nr][nc]) {
-        steps.push({ r: nr, c: nc })
-      }
+  const canSelect = (r: number, c: number) => {
+    const piece = board[r][c]
+    if (!piece || piece.player !== turn) return false
+    if (forced && (forced.r !== r || forced.c !== c)) return false
+    if (captureStarts.length > 0 && jumpMoves(board, { r, c }).length === 0) {
+      return false
     }
-
-    return steps
+    return true
   }
 
   const tapCell = (r: number, c: number) => {
     const here = board[r][c]
 
     if (!selected) {
-      if (!here || here.player !== turn) return
-      if (forced && (forced.r !== r || forced.c !== c)) return
-      if (captureStarts.length > 0 && jumpMoves(board, { r, c }).length === 0)
-        return
-
-      setSelected({ r, c })
+      if (canSelect(r, c)) setSelected({ r, c })
       return
     }
 
     const target = legalMoves(selected).find((m) => m.r === r && m.c === c)
 
     if (!target) {
-      if (here && here.player === turn) {
-        setSelected({ r, c })
-      }
+      if (canSelect(r, c)) setSelected({ r, c })
       return
     }
 
     const next = clone(board)
     const piece = next[selected.r][selected.c]
-
     if (!piece) return
 
-    const isJump = Math.abs(r - selected.r) === 2
+    const captured = capturedBetween(board, selected, { r, c })
+    const isJump = Boolean(captured)
 
     next[selected.r][selected.c] = null
     next[r][c] = piece
 
-    if (isJump) {
-      next[(r + selected.r) / 2][(c + selected.c) / 2] = null
+    if (captured) {
+      next[captured.r][captured.c] = null
     }
+
+    let promoted = false
 
     if (
       !piece.king &&
@@ -182,9 +245,10 @@ export default function Home() {
         (piece.player === 'white' && r === 0))
     ) {
       piece.king = true
+      promoted = true
     }
 
-    if (isJump && jumpMoves(next, { r, c }).length > 0) {
+    if (isJump && !promoted && jumpMoves(next, { r, c }).length > 0) {
       setBoard(next)
       setSelected({ r, c })
       setForced({ r, c })
@@ -265,9 +329,9 @@ export default function Home() {
         </div>
 
         <aside className="bg-slate-800 rounded-xl p-4 space-y-3 text-sm">
-          <h1 className="text-xl font-bold">หมากฮอสไทย (เล่นบนมือถือได้)</h1>
+          <h1 className="text-xl font-bold">หมากฮอสไทย</h1>
           <p>สถานะ: {msg}</p>
-          <p>กติกาที่รองรับ: เดินทแยง, บังคับกิน, และต้องกินต่อเมื่อกินได้ต่อ</p>
+          <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
           <p className="text-cyan-300">
             แนะนำ: หมุนจอแนวนอนเพื่อเห็นกระดานเต็มขึ้น
           </p>
@@ -285,7 +349,7 @@ export default function Home() {
             target="_blank"
             rel="noreferrer"
           >
-            อ้างอิงกติกา PlayOK
+            เล่น/เทียบกติกากับ PlayOK
           </a>
         </aside>
       </section>
