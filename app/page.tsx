@@ -50,11 +50,6 @@ export default function Home() {
   const canAnalyzeSelected = Boolean(selected && selectedPiece && selectedPiece.player === analysisPlayer)
 
   useEffect(() => {
-    setAnalysisRuntimeDepth(1)
-    setAnalysisElapsedMs(0)
-  }, [board, selected, analysisMode, analysisRequestedDepth, analysisPlayer])
-
-  useEffect(() => {
     if (!analysisEnabled) return
     const startedAt = Date.now() - analysisElapsedMs
     const timer = window.setInterval(() => {
@@ -71,6 +66,11 @@ export default function Home() {
     if (analysisMode === 'selected' && !canAnalyzeSelected) return []
     return analyzeTopPlayerLines(board, analysisPlayer, weights, analysisRuntimeDepth, analysisMode === 'selected' ? 1 : 5, analysisFrom)
   }, [analysisEnabled, analysisFrom, analysisMode, analysisPlayer, analysisRuntimeDepth, board, canAnalyzeSelected, weights])
+
+  const resetAnalysisProgress = () => {
+    setAnalysisRuntimeDepth(1)
+    setAnalysisElapsedMs(0)
+  }
 
   const legalMoves = (from: Pos): Pos[] => {
     const piece = board[from.r][from.c]
@@ -97,14 +97,20 @@ export default function Home() {
   const tapCell = (r: number, c: number) => {
     if (botEnabled && turn !== humanSide) return
     if (!selected) {
-      if (canSelect(r, c)) setSelected({ r, c })
+      if (canSelect(r, c)) {
+        setSelected({ r, c })
+        resetAnalysisProgress()
+      }
       return
     }
 
     const target = legalMoves(selected).find((m) => m.r === r && m.c === c)
 
     if (!target) {
-      if (canSelect(r, c)) setSelected({ r, c })
+      if (canSelect(r, c)) {
+        setSelected({ r, c })
+        resetAnalysisProgress()
+      }
       return
     }
 
@@ -116,6 +122,7 @@ export default function Home() {
       setSelected({ r, c })
       setForced({ r, c })
       setMsg('กินต่อบังคับ')
+      resetAnalysisProgress()
       return
     }
 
@@ -126,6 +133,7 @@ export default function Home() {
     setSelected(null)
     setForced(null)
     setTurn(nextTurn)
+    resetAnalysisProgress()
 
     if (winner) {
       setMsg(winner === 'black' ? 'ดำชนะ' : 'ขาวชนะ')
@@ -150,6 +158,7 @@ export default function Home() {
       setTurn(nextTurn)
       setSelected(null)
       setForced(null)
+      resetAnalysisProgress()
       if (winner) {
         setMsg(winner === 'black' ? 'ดำชนะ' : 'ขาวชนะ')
       } else {
@@ -165,14 +174,8 @@ export default function Home() {
     setTurn(starter)
     setSelected(null)
     setForced(null)
-    setAnalysisRuntimeDepth(1)
-    setAnalysisElapsedMs(0)
+    resetAnalysisProgress()
     setMsg(starter === 'black' ? 'เริ่มใหม่: ตาดำก่อน (Default)' : 'เริ่มใหม่: ตาขาวก่อน')
-  }
-
-  const restartAnalysis = () => {
-    setAnalysisRuntimeDepth(1)
-    setAnalysisElapsedMs(0)
   }
 
   return (
@@ -261,7 +264,10 @@ export default function Home() {
                 <select
                   className="mt-1 w-full rounded bg-slate-700 p-2"
                   value={analysisMode}
-                  onChange={(e) => setAnalysisMode(e.target.value as AnalysisMode)}
+                  onChange={(e) => {
+                    setAnalysisMode(e.target.value as AnalysisMode)
+                    resetAnalysisProgress()
+                  }}
                 >
                   <option value="top5">5 ทางเดินที่ดีที่สุด</option>
                   <option value="selected">เฉพาะตาที่เลือก</option>
@@ -279,6 +285,7 @@ export default function Home() {
                     const nextDepth = Number(e.target.value)
                     if (!Number.isFinite(nextDepth)) return
                     setAnalysisRequestedDepth(Math.max(1, Math.min(1000, Math.floor(nextDepth))))
+                    resetAnalysisProgress()
                   }}
                 />
               </label>
@@ -288,7 +295,7 @@ export default function Home() {
               <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-cyan-100">
                 {analysisEnabled ? (analysisRuntimeDepth >= analysisDepthLimit ? 'คิดครบความลึก' : 'กำลังถอดหมาก') : 'ปิดการวิเคราะห์'}
               </span>
-              <button onClick={restartAnalysis} className="rounded bg-slate-700 px-2 py-1 text-slate-100">
+              <button onClick={resetAnalysisProgress} className="rounded bg-slate-700 px-2 py-1 text-slate-100">
                 คิดใหม่
               </button>
             </div>
@@ -364,7 +371,10 @@ export default function Home() {
             <select
               className="mt-1 w-full rounded bg-slate-700 p-2"
               value={botEnabled ? 'bot' : 'human'}
-              onChange={(e) => setBotEnabled(e.target.value === 'bot')}
+              onChange={(e) => {
+                setBotEnabled(e.target.value === 'bot')
+                resetAnalysisProgress()
+              }}
             >
               <option value="bot">ถอดหมาก + ทดลองกับบอท</option>
               <option value="human">ถอดหมาก / คน vs คน</option>
@@ -378,7 +388,10 @@ export default function Home() {
                 <select
                   className="mt-1 w-full rounded bg-slate-700 p-2"
                   value={humanSide}
-                  onChange={(e) => setHumanSide(e.target.value as Player)}
+                  onChange={(e) => {
+                    setHumanSide(e.target.value as Player)
+                    resetAnalysisProgress()
+                  }}
                 >
                   <option value="black">เดินก่อน (ดำ)</option>
                   <option value="white">เดินหลัง (ขาว)</option>
