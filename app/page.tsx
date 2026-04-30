@@ -1,4 +1,3 @@
-
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -672,7 +671,7 @@ export default function Home() {
             target="_blank"
             rel="noreferrer"
           >
-            เล่น/เทียบกติกากับ PlayOK
+            เล่น/เทียบกติกากับ PlayOK v2
           </a>
         </aside>
       </section>
