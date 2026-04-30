@@ -571,17 +571,16 @@ export default function Home() {
                 const s = e.target.value as Player
                 setStarter(s)
 
-                // 👇 FIX ตรงนี้
-                // ถ้าขาวเริ่ม → คนต้องเป็นดำ (บอทเป็นขาว)
-                // ถ้าดำเริ่ม → คนเป็นขาว (บอทเป็นดำ)
-                setHumanSide(s === 'white' ? 'black' : 'white')
+                // ถ้าดำเดินก่อน (starter=black) -> คนเป็นดำ
+                // ถ้าดำเดินหลัง (starter=white) -> คนเป็นดำ (แต่บอทเริ่มก่อนเป็นขาว)
+                setHumanSide('black')
 
                 setReviewMode(false)
                 resetAnalysisProgress()
               }}
             >
-              <option value="black">ดำเดินก่อน (Default)</option>
-              <option value="white">ขาวเดินก่อน</option>
+              <option value="black">ดำเดินก่อน (คนเดินก่อนสีดำ)</option>
+              <option value="white">ดำเดินหลัง (บอทเดินก่อนสีขาว)</option>
             </select>
           </label>
 
