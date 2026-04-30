@@ -7,16 +7,24 @@ import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
   allCaptureStarts,
   applyMove,
+  cloneBoard,
   initBoard,
   jumpMoves,
   nextPlayer,
   stepMoves,
   winnerByPieces,
 } from '@/lib/checkers/rules'
-import type { BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
+import type { Board, BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: Thai 1-32 board notation'
+const RELEASE_NOTE = 'analysis: undo / redo move history'
 type AnalysisMode = 'top5' | 'selected'
+type GameSnapshot = {
+  board: Board
+  turn: Player
+  selected: Pos | null
+  forced: Pos | null
+  msg: string
+}
 
 export default function Home() {
   const [board, setBoard] = useState(initBoard)
@@ -36,6 +44,9 @@ export default function Home() {
   const [analysisRequestedDepth, setAnalysisRequestedDepth] = useState(6)
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
   const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
+  const [past, setPast] = useState<GameSnapshot[]>([])
+  const [future, setFuture] = useState<GameSnapshot[]>([])
+  const [reviewMode, setReviewMode] = useState(false)
 
   useEffect(() => {
     loadAlphaBetaWeights().then(setWeights)
@@ -70,6 +81,53 @@ export default function Home() {
   const resetAnalysisProgress = () => {
     setAnalysisRuntimeDepth(1)
     setAnalysisElapsedMs(0)
+  }
+
+  const makeSnapshot = (): GameSnapshot => ({
+    board: cloneBoard(board),
+    turn,
+    selected,
+    forced,
+    msg,
+  })
+
+  const restoreSnapshot = (snapshot: GameSnapshot) => {
+    setBoard(cloneBoard(snapshot.board))
+    setTurn(snapshot.turn)
+    setSelected(snapshot.selected)
+    setForced(snapshot.forced)
+    setMsg(snapshot.msg)
+  }
+
+  const pushHistory = () => {
+    setPast((items) => [...items.slice(-99), makeSnapshot()])
+    setFuture([])
+  }
+
+  const undoMove = () => {
+    if (past.length === 0) return
+    const previous = past[past.length - 1]
+    setPast(past.slice(0, -1))
+    setFuture((items) => [makeSnapshot(), ...items].slice(0, 100))
+    restoreSnapshot(previous)
+    setReviewMode(true)
+    resetAnalysisProgress()
+  }
+
+  const redoMove = () => {
+    if (future.length === 0) return
+    const next = future[0]
+    setFuture(future.slice(1))
+    setPast((items) => [...items.slice(-99), makeSnapshot()])
+    restoreSnapshot(next)
+    setReviewMode(true)
+    resetAnalysisProgress()
+  }
+
+  const resumeFromHistory = () => {
+    setReviewMode(false)
+    setFuture([])
+    resetAnalysisProgress()
   }
 
   const legalMoves = (from: Pos): Pos[] => {
@@ -114,6 +172,8 @@ export default function Home() {
       return
     }
 
+    pushHistory()
+    setReviewMode(false)
     const { board: next, captured, promoted } = applyMove(board, selected, { r, c })
     const isJump = Boolean(captured)
 
@@ -143,7 +203,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (!botEnabled || turn === humanSide || forced) return
+    if (!botEnabled || turn === humanSide || forced || reviewMode) return
 
     if (botEngine === 'deep-q') return
     const timer = setTimeout(() => {
@@ -154,6 +214,11 @@ export default function Home() {
       }
       const nextTurn = nextPlayer(turn)
       const winner = winnerByPieces(next)
+      setPast((items) => [
+        ...items.slice(-99),
+        { board: cloneBoard(board), turn, selected, forced, msg },
+      ])
+      setFuture([])
       setBoard(next)
       setTurn(nextTurn)
       setSelected(null)
@@ -167,13 +232,16 @@ export default function Home() {
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [board, botEnabled, botEngine, botLevel, customBotDepth, forced, humanSide, turn, weights])
+  }, [board, botEnabled, botEngine, botLevel, customBotDepth, forced, humanSide, msg, reviewMode, selected, turn, weights])
 
   const reset = () => {
     setBoard(initBoard())
     setTurn(starter)
     setSelected(null)
     setForced(null)
+    setPast([])
+    setFuture([])
+    setReviewMode(false)
     resetAnalysisProgress()
     setMsg(starter === 'black' ? 'เริ่มใหม่: ตาดำก่อน (Default)' : 'เริ่มใหม่: ตาขาวก่อน')
   }
@@ -241,6 +309,35 @@ export default function Home() {
           <p className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
             กระดานถูกพลิกให้ดำเริ่มจากด้านล่าง เลข 1-32 แสดงเฉพาะช่องเดินจริง และตรงกับเส้นทางใน Thinking window เช่น 9 → 14
           </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={undoMove}
+              disabled={past.length === 0}
+              className="rounded-lg bg-slate-700 px-3 py-2 font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              ถอยกลับ
+            </button>
+            <button
+              onClick={redoMove}
+              disabled={future.length === 0}
+              className="rounded-lg bg-slate-700 px-3 py-2 font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              เดินหน้า
+            </button>
+          </div>
+
+          {reviewMode ? (
+            <div className="rounded-md border border-amber-400/40 bg-amber-500/10 p-3 text-xs text-amber-100">
+              <p>กำลังดูย้อนหลัง บอทจะหยุดเดินอัตโนมัติชั่วคราว</p>
+              <button
+                onClick={resumeFromHistory}
+                className="mt-2 w-full rounded bg-amber-400 px-3 py-2 font-semibold text-slate-950"
+              >
+                เล่นต่อจากตำแหน่งนี้
+              </button>
+            </div>
+          ) : null}
 
           <div className="rounded-xl border border-cyan-400/50 bg-slate-950/60 p-3 shadow-lg shadow-cyan-950/40">
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -373,6 +470,7 @@ export default function Home() {
               value={botEnabled ? 'bot' : 'human'}
               onChange={(e) => {
                 setBotEnabled(e.target.value === 'bot')
+                setReviewMode(false)
                 resetAnalysisProgress()
               }}
             >
@@ -390,6 +488,7 @@ export default function Home() {
                   value={humanSide}
                   onChange={(e) => {
                     setHumanSide(e.target.value as Player)
+                    setReviewMode(false)
                     resetAnalysisProgress()
                   }}
                 >
