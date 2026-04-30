@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { analyzeTopPlayerLines, MAX_ANALYSIS_DEPTH, playableSquareNumber } from '@/lib/checkers/analysis'
-import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
+import { chooseAlphaBetaMove, chooseThinkingWindowMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
 import { deepSolvePosition, type DeepSolveResult } from '@/lib/checkers/deepSolve'
 import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
@@ -55,7 +55,7 @@ export default function Home() {
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
   const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
   const [deepSolveDepthInput, setDeepSolveDepthInput] = useState('18')
-  const [deepSolveTimeInput, setDeepSolveTimeInput] = useState('5000')
+  const [deepSolveTimeInput, setDeepSolveTimeInput] = useState('5')
   const [deepSolveResult, setDeepSolveResult] = useState<DeepSolveResult | null>(null)
   const [deepSolveRunning, setDeepSolveRunning] = useState(false)
   const [past, setPast] = useState<GameSnapshot[]>([])
@@ -71,7 +71,7 @@ export default function Home() {
   const customBotDepth = clampDepthInput(customBotDepthInput, 5)
   const analysisRequestedDepth = clampDepthInput(analysisRequestedDepthInput, 6)
   const deepSolveDepth = Math.max(1, Math.min(24, clampDepthInput(deepSolveDepthInput, 18)))
-  const deepSolveTimeMs = Math.max(300, Math.min(60_000, clampDepthInput(deepSolveTimeInput, 5000)))
+  const deepSolveTimeMs = Math.max(300, Math.min(60_000, clampDepthInput(deepSolveTimeInput, 5) * 1000))
   const analysisDepthLimit = Math.min(MAX_ANALYSIS_DEPTH, Math.max(1, Math.floor(analysisRequestedDepth)))
   const analysisPlayer = botEnabled ? humanSide : turn
   const analysisFrom = analysisMode === 'selected' ? selected : null
@@ -238,7 +238,10 @@ export default function Home() {
 
     if (botEngine === 'deep-q') return
     const timer = setTimeout(() => {
-      const next = chooseAlphaBetaMove(board, turn, botLevel, weights, customBotDepth)
+      const next =
+        botEngine === 'thinking-window'
+          ? chooseThinkingWindowMove(board, turn, botLevel, weights, customBotDepth)
+          : chooseAlphaBetaMove(board, turn, botLevel, weights, customBotDepth)
       if (!next) {
         setMsg(turn === 'black' ? 'ขาวชนะ (ดำเดินไม่ได้)' : 'ดำชนะ (ขาวเดินไม่ได้)')
         return
@@ -452,13 +455,13 @@ export default function Home() {
                     />
                   </label>
                   <label className="block">
-                    เวลา ms
+                    เวลา (วินาที)
                     <input
                       className="mt-1 w-full rounded bg-slate-700 p-2"
                       type="number"
                       inputMode="numeric"
-                      min={300}
-                      max={60000}
+                      min={1}
+                      max={60}
                       value={deepSolveTimeInput}
                       onChange={(e) => setDeepSolveTimeInput(e.target.value)}
                     />
@@ -614,6 +617,7 @@ export default function Home() {
                   onChange={(e) => setBotEngine(e.target.value as BotEngine)}
                 >
                   <option value="alpha-beta">Alpha-Beta Pruning (พร้อมใช้)</option>
+                  <option value="thinking-window">บอทตาม Thinking window ที่ดีที่สุด</option>
                   <option value="deep-q">Deep Q-Learning (ยังไม่พบแหล่งพร้อมใช้)</option>
                 </select>
               </label>
