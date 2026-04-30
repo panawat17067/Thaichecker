@@ -10,6 +10,20 @@ type BotEngine = 'alpha-beta' | 'deep-q'
 
 const BOARD = 8
 const RELEASE_NOTE = 'fix: support Thai checkers rules'
+
+const PUBLIC_AI_SOURCES = [
+  {
+    name: 'CU_Makhos (PyTorch, AlphaGo-style + minimax)',
+    model: 'train_iter_268.pth.tar',
+    url: 'https://github.com/51616/CU_Makhos',
+  },
+  {
+    name: 'witchu/alphazero (Keras, AlphaZero-style)',
+    model: 'model-45k.h5',
+    url: 'https://github.com/witchu/alphazero',
+  },
+]
+
 const kingDirs = [
   [1, 1],
   [1, -1],
@@ -487,8 +501,22 @@ export default function Home() {
             อัปเดตล่าสุด: <span className="font-semibold">{RELEASE_NOTE}</span>
           </p>
           <p className="text-xs text-amber-200">
-            หมายเหตุ: ตอนนี้มีเฉพาะ Alpha-Beta ที่พร้อมใช้ทันทีในเว็บนี้ ส่วน Deep Q-Learning ยังไม่พบโมเดลฝึกฟรีที่เชื่อถือได้สำหรับหมากฮอสไทย
+            หมายเหตุ: ในเว็บนี้ใช้งานได้ทันทีเฉพาะ Alpha-Beta. จากการสำรวจยังไม่พบโมเดล Deep Q-Learning สาธารณะที่พร้อมใช้ตรงกับหมากฮอสไทย
           </p>
+          <div className="rounded-md border border-slate-600 p-3 text-xs space-y-2">
+            <p className="font-semibold text-slate-200">แหล่งโมเดลสาธารณะที่แนะนำ</p>
+            {PUBLIC_AI_SOURCES.map((src) => (
+              <a
+                key={src.url}
+                href={src.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block underline text-cyan-300"
+              >
+                {src.name} — {src.model}
+              </a>
+            ))}
+          </div>
 
           <label className="block">
             เริ่มก่อน
@@ -536,7 +564,7 @@ export default function Home() {
                   onChange={(e) => setBotEngine(e.target.value as BotEngine)}
                 >
                   <option value="alpha-beta">Alpha-Beta Pruning (พร้อมใช้)</option>
-                  <option value="deep-q">Deep Q-Learning (ยังไม่มีโมเดลฟรี)</option>
+                  <option value="deep-q">Deep Q-Learning (ยังไม่พบแหล่งพร้อมใช้)</option>
                 </select>
               </label>
 
