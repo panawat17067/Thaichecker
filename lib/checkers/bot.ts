@@ -1,5 +1,6 @@
 import { bestBoard } from './alphaBeta'
 import { defaultWeights } from './evaluate'
+import { defaultValueWeights, normalizeValueWeights } from './valueModel'
 import type { Board, BotLevel, Player, Weights } from './types'
 
 export const BOT_DEPTH_BY_LEVEL: Record<Exclude<BotLevel, 'custom'>, number> = {
@@ -15,15 +16,23 @@ export function clampBotDepth(depth: number): number {
 
 export async function loadAlphaBetaWeights(): Promise<Weights> {
   try {
-    const res = await fetch('/models/alpha-beta-trained.json', { cache: 'no-store' })
-    if (!res.ok) return defaultWeights
-    const data = (await res.json()) as Partial<Weights>
+    const [alphaRes, valueRes] = await Promise.all([
+      fetch('/models/alpha-beta-trained.json', { cache: 'no-store' }),
+      fetch('/models/value-trained.json', { cache: 'no-store' }),
+    ])
+
+    const alphaData = alphaRes.ok ? ((await alphaRes.json()) as Partial<Weights>) : defaultWeights
+    const valueData = valueRes.ok ? await valueRes.json() : defaultValueWeights
+
     return {
-      man: data.man ?? defaultWeights.man,
-      king: data.king ?? defaultWeights.king,
-      mobility: data.mobility ?? defaultWeights.mobility,
-      captureBonus: data.captureBonus ?? defaultWeights.captureBonus,
-      kingAdvance: data.kingAdvance ?? defaultWeights.kingAdvance,
+      man: alphaData.man ?? defaultWeights.man,
+      king: alphaData.king ?? defaultWeights.king,
+      mobility: alphaData.mobility ?? defaultWeights.mobility,
+      captureBonus: alphaData.captureBonus ?? defaultWeights.captureBonus,
+      kingAdvance: alphaData.kingAdvance ?? defaultWeights.kingAdvance,
+      valueBias: alphaData.valueBias ?? defaultWeights.valueBias,
+      valueScale: alphaData.valueScale ?? defaultWeights.valueScale,
+      valueWeights: normalizeValueWeights(valueData),
     }
   } catch {
     return defaultWeights
