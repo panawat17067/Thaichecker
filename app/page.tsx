@@ -39,6 +39,7 @@ export default function Home() {
   const [botEnabled, setBotEnabled] = useState(true)
   const [humanSide, setHumanSide] = useState<Player>('black')
   const [botLevel, setBotLevel] = useState<BotLevel>('hard')
+  const [customBotDepth, setCustomBotDepth] = useState(5)
   const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
   const [weights, setWeights] = useState<Weights>(defaultWeights)
 
@@ -115,7 +116,7 @@ export default function Home() {
 
     if (botEngine === 'deep-q') return
     const timer = setTimeout(() => {
-      const next = chooseAlphaBetaMove(board, turn, botLevel, weights)
+      const next = chooseAlphaBetaMove(board, turn, botLevel, weights, customBotDepth)
       if (!next) {
         setMsg(turn === 'black' ? 'ขาวชนะ (ดำเดินไม่ได้)' : 'ดำชนะ (ขาวเดินไม่ได้)')
         return
@@ -134,7 +135,7 @@ export default function Home() {
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [board, botEnabled, botEngine, botLevel, forced, humanSide, turn, weights])
+  }, [board, botEnabled, botEngine, botLevel, customBotDepth, forced, humanSide, turn, weights])
 
   const reset = () => {
     setBoard(initBoard())
@@ -274,11 +275,33 @@ export default function Home() {
                   value={botLevel}
                   onChange={(e) => setBotLevel(e.target.value as BotLevel)}
                 >
-                  <option value="easy">ง่าย</option>
-                  <option value="normal">ปกติ</option>
-                  <option value="hard">ยาก</option>
+                  <option value="easy">ง่าย (depth 1)</option>
+                  <option value="normal">ปกติ (depth 3)</option>
+                  <option value="hard">ยาก (depth 5)</option>
+                  <option value="custom">ปรับเอง</option>
                 </select>
               </label>
+
+              {botLevel === 'custom' && (
+                <label className="block">
+                  Depth ปรับเอง (1-1000)
+                  <input
+                    className="mt-1 w-full rounded bg-slate-700 p-2"
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={customBotDepth}
+                    onChange={(e) => {
+                      const nextDepth = Number(e.target.value)
+                      if (!Number.isFinite(nextDepth)) return
+                      setCustomBotDepth(Math.max(1, Math.min(1000, Math.floor(nextDepth))))
+                    }}
+                  />
+                  <p className="mt-1 text-xs text-amber-200">
+                    ค่า depth สูงมากอาจทำให้เครื่องช้า/ค้าง โดยเฉพาะบนมือถือ แนะนำ 6-8 ก่อน
+                  </p>
+                </label>
+              )}
             </>
           )}
 
