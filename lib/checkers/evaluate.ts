@@ -1,6 +1,6 @@
 import type { Board, Player, Weights } from './types'
 import { allCaptureStarts, nextPlayer, stepMoves } from './rules'
-import { defaultValueWeights, evaluateValueBoard } from './valueModel'
+import { defaultValueWeights, evaluateValueBoard, normalizeValueWeights } from './valueModel'
 
 export const defaultWeights: Weights = {
   man: 2,
@@ -10,6 +10,7 @@ export const defaultWeights: Weights = {
   kingAdvance: 0.05,
   valueBias: 0,
   valueScale: 1,
+  valueWeights: defaultValueWeights,
 }
 
 function evaluateClassicBoard(board: Board, root: Player, weights: Weights): number {
@@ -42,6 +43,7 @@ function evaluateClassicBoard(board: Board, root: Player, weights: Weights): num
 
 export function evaluateBoard(board: Board, root: Player, weights: Weights): number {
   const classicScore = evaluateClassicBoard(board, root, weights)
-  const valueScore = evaluateValueBoard(board, root, defaultValueWeights)
+  const trainedValueWeights = normalizeValueWeights(weights.valueWeights ?? defaultValueWeights)
+  const valueScore = evaluateValueBoard(board, root, trainedValueWeights)
   return classicScore + (weights.valueBias ?? 0) + valueScore * (weights.valueScale ?? 1)
 }
