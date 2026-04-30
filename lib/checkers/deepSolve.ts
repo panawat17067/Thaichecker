@@ -36,6 +36,10 @@ const WIN_SCORE = 10_000
 const QUIESCENCE_DEPTH = 8
 const DEFAULT_TIME_LIMIT_MS = 5_000
 
+function nowMs(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
 function formatSquare(pos: Pos): string {
   return String(playableSquareNumber(pos) ?? `${pos.r + 1}-${pos.c + 1}`)
 }
@@ -56,12 +60,7 @@ function boardKey(board: Board, root: Player, side: Player, depth: number, qDept
 }
 
 function orderScore(candidate: CandidateLine, root: Player, weights: Weights): number {
-  return (
-    candidate.captures * 120 +
-    candidate.capturedKings * 260 +
-    candidate.promotions * 90 +
-    evaluateBoard(candidate.board, root, weights)
-  )
+  return candidate.captures * 120 + candidate.capturedKings * 260 + candidate.promotions * 90 + evaluateBoard(candidate.board, root, weights)
 }
 
 function buildCandidateLines(board: Board, turn: Player, root: Player, weights: Weights): CandidateLine[] {
@@ -88,13 +87,7 @@ function buildCandidateLines(board: Board, turn: Player, root: Player, weights: 
       const nextPath = [...path, target]
 
       if (moved.promoted) {
-        out.push({
-          board: moved.board,
-          path: nextPath,
-          captures: nextCaptures,
-          capturedKings: nextCapturedKings,
-          promotions: nextPromotions,
-        })
+        out.push({ board: moved.board, path: nextPath, captures: nextCaptures, capturedKings: nextCapturedKings, promotions: nextPromotions })
       } else {
         out.push(...followJumps(moved.board, target, nextPath, nextCaptures, nextCapturedKings, nextPromotions))
       }
@@ -113,13 +106,7 @@ function buildCandidateLines(board: Board, turn: Player, root: Player, weights: 
         const from = { r, c }
         for (const target of stepMoves(board, from)) {
           const moved = applyMove(board, from, target)
-          candidates.push({
-            board: moved.board,
-            path: [from, target],
-            captures: 0,
-            capturedKings: 0,
-            promotions: moved.promoted ? 1 : 0,
-          })
+          candidates.push({ board: moved.board, path: [from, target], captures: 0, capturedKings: 0, promotions: moved.promoted ? 1 : 0 })
         }
       }
     }
@@ -144,8 +131,8 @@ function scoreToChance(score: number, depth: number): number {
   return Math.max(1, Math.min(99, Math.round(probability * 100)))
 }
 
-function scoreToStatus(score: number, timedOut: boolean): DeepSolveStatus {
-  if (timedOut) return 'timeout'
+function scoreToStatus(score: number, timedOut: boolean, elapsedMs: number, timeLimitMs: number): DeepSolveStatus {
+  if (timedOut && elapsedMs >= timeLimitMs * 0.95) return 'timeout'
   if (score >= 9_000) return 'proven-win'
   if (score <= -9_000) return 'proven-loss'
   if (Math.abs(score) < 0.6) return 'unknown'
@@ -159,8 +146,9 @@ export function deepSolvePosition(
   maxDepth: number,
   timeLimitMs = DEFAULT_TIME_LIMIT_MS,
 ): DeepSolveResult {
-  const startedAt = Date.now()
-  const deadline = startedAt + Math.max(300, Math.min(60_000, Math.floor(timeLimitMs)))
+  const normalizedTimeLimitMs = Math.max(300, Math.min(60_000, Math.floor(timeLimitMs)))
+  const startedAt = nowMs()
+  const deadline = startedAt + normalizedTimeLimitMs
   const depthLimit = Math.max(1, Math.min(24, Math.floor(maxDepth)))
   const table = new Map<string, number>()
   let nodes = 0
@@ -170,23 +158,16 @@ export function deepSolvePosition(
   let depthReached = 0
 
   const checkTime = () => {
-    if (Date.now() > deadline) {
+    if (nowMs() >= deadline) {
       timedOut = true
       return true
     }
     return false
   }
 
-  const search = (
-    b: Board,
-    side: Player,
-    depthLeft: number,
-    qDepth: number,
-    alpha: number,
-    beta: number,
-  ): number => {
+  const search = (b: Board, side: Player, depthLeft: number, qDepth: number, alpha: number, beta: number): number => {
     nodes += 1
-    if ((nodes & 511) === 0 && checkTime()) return evaluateBoard(b, player, weights)
+    if ((nodes & 127) === 0 && checkTime()) return evaluateBoard(b, player, weights)
 
     const terminal = terminalScore(b, player, depthLeft + qDepth)
     if (terminal !== null) return terminal
@@ -239,18 +220,17 @@ export function deepSolvePosition(
     return result
   }
 
+  const rootMoves = buildCandidateLines(board, player, player, weights)
+  if (rootMoves.length === 0) {
+    const elapsedMs = Math.round(nowMs() - startedAt)
+    return { status: 'proven-loss', bestLine: '', score: -WIN_SCORE, winChance: 0, depthReached: 0, nodes, elapsedMs, timedOut: false }
+  }
+
   for (let depth = 1; depth <= depthLimit; depth++) {
     if (checkTime()) break
-    const rootMoves = buildCandidateLines(board, player, player, weights)
-    if (rootMoves.length === 0) {
-      bestScore = -WIN_SCORE
-      bestLine = ''
-      depthReached = depth
-      break
-    }
-
     let roundBest = -Infinity
     let roundLine = rootMoves[0].path
+
     for (const move of rootMoves) {
       const score = search(move.board, nextPlayer(player), depth - 1, QUIESCENCE_DEPTH, -Infinity, Infinity)
       if (score > roundBest) {
@@ -268,15 +248,15 @@ export function deepSolvePosition(
     }
   }
 
-  const elapsedMs = Date.now() - startedAt
+  const elapsedMs = Math.round(nowMs() - startedAt)
   return {
-    status: scoreToStatus(bestScore, timedOut),
+    status: scoreToStatus(bestScore, timedOut, elapsedMs, normalizedTimeLimitMs),
     bestLine,
     score: bestScore,
     winChance: scoreToChance(bestScore, Math.max(1, depthReached)),
     depthReached,
     nodes,
     elapsedMs,
-    timedOut,
+    timedOut: timedOut && elapsedMs >= normalizedTimeLimitMs * 0.95,
   }
 }
