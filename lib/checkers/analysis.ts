@@ -23,7 +23,11 @@ type CandidateLine = {
   path: Pos[]
 }
 
-const MAX_ANALYSIS_DEPTH = 6
+export const MAX_ANALYSIS_DEPTH = 12
+
+function samePos(a: Pos, b: Pos): boolean {
+  return a.r === b.r && a.c === b.c
+}
 
 function formatSquare(pos: Pos): string {
   return `${pos.r + 1}-${pos.c + 1}`
@@ -33,7 +37,7 @@ function formatPath(path: Pos[]): string {
   return path.map(formatSquare).join(' → ')
 }
 
-function buildCandidateLines(board: Board, turn: Player): CandidateLine[] {
+function buildCandidateLines(board: Board, turn: Player, onlyFrom?: Pos | null): CandidateLine[] {
   const starts = allCaptureStarts(board, turn)
 
   const followJumps = (b: Board, at: Pos, path: Pos[]): CandidateLine[] => {
@@ -51,16 +55,19 @@ function buildCandidateLines(board: Board, turn: Player): CandidateLine[] {
   }
 
   if (starts.length > 0) {
-    return starts.flatMap((start) => followJumps(cloneBoard(board), start, [start]))
+    const filteredStarts = onlyFrom ? starts.filter((start) => samePos(start, onlyFrom)) : starts
+    return filteredStarts.flatMap((start) => followJumps(cloneBoard(board), start, [start]))
   }
 
   const out: CandidateLine[] = []
   for (let r = 0; r < board.length; r++) {
     for (let c = 0; c < board[r].length; c++) {
+      const from = { r, c }
       const piece = board[r][c]
       if (!piece || piece.player !== turn) continue
-      for (const target of stepMoves(board, { r, c })) {
-        out.push({ board: applyMove(board, { r, c }, target).board, path: [{ r, c }, target] })
+      if (onlyFrom && !samePos(from, onlyFrom)) continue
+      for (const target of stepMoves(board, from)) {
+        out.push({ board: applyMove(board, from, target).board, path: [from, target] })
       }
     }
   }
@@ -127,9 +134,10 @@ export function analyzeTopPlayerLines(
   weights: Weights,
   requestedDepth: number,
   limit = 5,
+  onlyFrom?: Pos | null,
 ): AnalysisLine[] {
   const depth = Math.max(1, Math.min(MAX_ANALYSIS_DEPTH, Math.floor(requestedDepth)))
-  const candidates = buildCandidateLines(board, player)
+  const candidates = buildCandidateLines(board, player, onlyFrom)
 
   return candidates
     .map((candidate) => {
