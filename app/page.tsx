@@ -16,8 +16,8 @@ import {
 } from '@/lib/checkers/rules'
 import type { Board, BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: editable depth inputs'
-type AnalysisMode = 'top5' | 'selected'
+const RELEASE_NOTE = 'analysis: default to one best move'
+type AnalysisMode = 'best1' | 'top5' | 'selected'
 type GameSnapshot = {
   board: Board
   turn: Player
@@ -48,7 +48,7 @@ export default function Home() {
   const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
   const [weights, setWeights] = useState<Weights>(defaultWeights)
   const [analysisEnabled, setAnalysisEnabled] = useState(true)
-  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('top5')
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('best1')
   const [analysisRequestedDepthInput, setAnalysisRequestedDepthInput] = useState('6')
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
   const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
@@ -69,6 +69,7 @@ export default function Home() {
   const analysisFrom = analysisMode === 'selected' ? selected : null
   const selectedPiece = selected ? board[selected.r]?.[selected.c] : null
   const canAnalyzeSelected = Boolean(selected && selectedPiece && selectedPiece.player === analysisPlayer)
+  const analysisLimit = analysisMode === 'top5' ? 5 : 1
 
   useEffect(() => {
     if (!analysisEnabled) return
@@ -85,8 +86,8 @@ export default function Home() {
   const analysisLines = useMemo(() => {
     if (!analysisEnabled) return []
     if (analysisMode === 'selected' && !canAnalyzeSelected) return []
-    return analyzeTopPlayerLines(board, analysisPlayer, weights, analysisRuntimeDepth, analysisMode === 'selected' ? 1 : 5, analysisFrom)
-  }, [analysisEnabled, analysisFrom, analysisMode, analysisPlayer, analysisRuntimeDepth, board, canAnalyzeSelected, weights])
+    return analyzeTopPlayerLines(board, analysisPlayer, weights, analysisRuntimeDepth, analysisLimit, analysisFrom)
+  }, [analysisEnabled, analysisFrom, analysisLimit, analysisMode, analysisPlayer, analysisRuntimeDepth, board, canAnalyzeSelected, weights])
 
   const resetAnalysisProgress = () => {
     setAnalysisRuntimeDepth(1)
@@ -256,6 +257,13 @@ export default function Home() {
     setMsg(starter === 'black' ? 'เริ่มใหม่: ตาดำก่อน (Default)' : 'เริ่มใหม่: ตาขาวก่อน')
   }
 
+  const analysisModeLabel =
+    analysisMode === 'selected'
+      ? 'ถอดเฉพาะหมากที่เลือก'
+      : analysisMode === 'top5'
+        ? 'วิเคราะห์ 5 ทางเดินที่ดีที่สุด'
+        : 'วิเคราะห์ 1 ทางเดินที่ดีที่สุด'
+
   return (
     <main className="min-h-screen bg-slate-950 text-white p-3 sm:p-4">
       <section className="mx-auto w-full max-w-[1200px] aspect-auto md:aspect-video bg-slate-900 rounded-2xl p-3 sm:p-4 md:p-6 shadow-2xl grid grid-cols-1 md:grid-cols-[1fr_300px] gap-4 md:gap-6">
@@ -354,7 +362,7 @@ export default function Home() {
               <div>
                 <p className="font-semibold text-cyan-200">Thinking window</p>
                 <p className="text-xs text-slate-300">
-                  {analysisMode === 'selected' ? 'ถอดเฉพาะหมากที่เลือก' : 'วิเคราะห์ 5 ทางเดินที่ดีที่สุด'} · depth {analysisRuntimeDepth}/{analysisDepthLimit} · {(analysisElapsedMs / 1000).toFixed(1)}s
+                  {analysisModeLabel} · depth {analysisRuntimeDepth}/{analysisDepthLimit} · {(analysisElapsedMs / 1000).toFixed(1)}s
                 </p>
               </div>
               <button
@@ -376,6 +384,7 @@ export default function Home() {
                     resetAnalysisProgress()
                   }}
                 >
+                  <option value="best1">1 ทางเดินที่ดีที่สุด (เร็ว/แนะนำ)</option>
                   <option value="top5">5 ทางเดินที่ดีที่สุด</option>
                   <option value="selected">เฉพาะตาที่เลือก</option>
                 </select>
@@ -397,6 +406,12 @@ export default function Home() {
                 />
               </label>
             </div>
+
+            {analysisMode === 'top5' ? (
+              <p className="mt-2 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                โหมด 5 ทางเดินใช้ CPU มากกว่า ถ้าเครื่องหน่วงให้กลับไปใช้ 1 ทางเดินที่ดีที่สุด
+              </p>
+            ) : null}
 
             <div className="mt-2 flex items-center justify-between gap-2 text-xs">
               <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-cyan-100">
