@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { analyzeTopPlayerLines } from '@/lib/checkers/analysis'
+import { analyzeTopPlayerLines, MAX_ANALYSIS_DEPTH } from '@/lib/checkers/analysis'
 import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
 import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
@@ -15,7 +15,8 @@ import {
 } from '@/lib/checkers/rules'
 import type { BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: show top 5 player move paths'
+const RELEASE_NOTE = 'analysis: controllable realtime thinking window'
+type AnalysisMode = 'top5' | 'selected'
 
 export default function Home() {
   const [board, setBoard] = useState(initBoard)
@@ -30,6 +31,11 @@ export default function Home() {
   const [customBotDepth, setCustomBotDepth] = useState(5)
   const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
   const [weights, setWeights] = useState<Weights>(defaultWeights)
+  const [analysisEnabled, setAnalysisEnabled] = useState(true)
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('top5')
+  const [analysisRequestedDepth, setAnalysisRequestedDepth] = useState(6)
+  const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
+  const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
 
   useEffect(() => {
     loadAlphaBetaWeights().then(setWeights)
@@ -37,19 +43,42 @@ export default function Home() {
 
   const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
 
-  const analysisDepth = useMemo(() => {
+  const botDepth = useMemo(() => {
     if (botLevel === 'custom') return customBotDepth
     if (botLevel === 'easy') return 1
     if (botLevel === 'normal') return 3
     return 5
   }, [botLevel, customBotDepth])
 
+  const analysisDepthLimit = Math.min(MAX_ANALYSIS_DEPTH, Math.max(1, Math.floor(analysisRequestedDepth)))
   const analysisPlayer = botEnabled ? humanSide : turn
   const isBotThinking = botEnabled && botEngine === 'alpha-beta' && turn !== humanSide && !forced
-  const analysisLines = useMemo(
-    () => analyzeTopPlayerLines(board, analysisPlayer, weights, analysisDepth, 5),
-    [analysisDepth, analysisPlayer, board, weights],
-  )
+  const analysisFrom = analysisMode === 'selected' ? selected : null
+  const selectedPiece = selected ? board[selected.r]?.[selected.c] : null
+  const canAnalyzeSelected = Boolean(selected && selectedPiece && selectedPiece.player === analysisPlayer)
+
+  useEffect(() => {
+    setAnalysisRuntimeDepth(1)
+    setAnalysisElapsedMs(0)
+  }, [board, selected, analysisMode, analysisRequestedDepth, analysisPlayer])
+
+  useEffect(() => {
+    if (!analysisEnabled) return
+    const startedAt = Date.now() - analysisElapsedMs
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - startedAt
+      setAnalysisElapsedMs(elapsed)
+      setAnalysisRuntimeDepth((depth) => Math.min(analysisDepthLimit, depth + 1))
+    }, 900)
+
+    return () => window.clearInterval(timer)
+  }, [analysisDepthLimit, analysisElapsedMs, analysisEnabled])
+
+  const analysisLines = useMemo(() => {
+    if (!analysisEnabled) return []
+    if (analysisMode === 'selected' && !canAnalyzeSelected) return []
+    return analyzeTopPlayerLines(board, analysisPlayer, weights, analysisRuntimeDepth, analysisMode === 'selected' ? 1 : 5, analysisFrom)
+  }, [analysisEnabled, analysisFrom, analysisMode, analysisPlayer, analysisRuntimeDepth, board, canAnalyzeSelected, weights])
 
   const legalMoves = (from: Pos): Pos[] => {
     const piece = board[from.r][from.c]
@@ -144,7 +173,14 @@ export default function Home() {
     setTurn(starter)
     setSelected(null)
     setForced(null)
+    setAnalysisRuntimeDepth(1)
+    setAnalysisElapsedMs(0)
     setMsg(starter === 'black' ? 'เริ่มใหม่: ตาดำก่อน (Default)' : 'เริ่มใหม่: ตาขาวก่อน')
+  }
+
+  const restartAnalysis = () => {
+    setAnalysisRuntimeDepth(1)
+    setAnalysisElapsedMs(0)
   }
 
   return (
@@ -205,22 +241,73 @@ export default function Home() {
               <div>
                 <p className="font-semibold text-cyan-200">Thinking window</p>
                 <p className="text-xs text-slate-300">
-                  วิเคราะห์ 5 ทางเดินที่ดีที่สุดของ{analysisPlayer === 'black' ? 'ดำ' : 'ขาว'} · depth {Math.min(analysisDepth, 6)}
+                  {analysisMode === 'selected' ? 'ถอดเฉพาะหมากที่เลือก' : 'วิเคราะห์ 5 ทางเดินที่ดีที่สุด'} · depth {analysisRuntimeDepth}/{analysisDepthLimit} · {(analysisElapsedMs / 1000).toFixed(1)}s
                 </p>
               </div>
-              <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-xs text-cyan-100">
-                {isBotThinking ? 'AI thinking' : 'พร้อม'}
-              </span>
+              <button
+                onClick={() => setAnalysisEnabled((value) => !value)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${analysisEnabled ? 'bg-cyan-500 text-black' : 'bg-slate-700 text-slate-200'}`}
+              >
+                {analysisEnabled ? 'ปิด' : 'เปิด'}
+              </button>
             </div>
 
-            {analysisLines.length === 0 ? (
-              <p className="rounded-md bg-slate-900 px-3 py-2 text-sm text-amber-200">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="block">
+                โหมดถอดหมาก
+                <select
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  value={analysisMode}
+                  onChange={(e) => setAnalysisMode(e.target.value as AnalysisMode)}
+                >
+                  <option value="top5">5 ทางเดินที่ดีที่สุด</option>
+                  <option value="selected">เฉพาะตาที่เลือก</option>
+                </select>
+              </label>
+              <label className="block">
+                ความลึกวิเคราะห์
+                <input
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  type="number"
+                  min={1}
+                  max={1000}
+                  value={analysisRequestedDepth}
+                  onChange={(e) => {
+                    const nextDepth = Number(e.target.value)
+                    if (!Number.isFinite(nextDepth)) return
+                    setAnalysisRequestedDepth(Math.max(1, Math.min(1000, Math.floor(nextDepth))))
+                  }}
+                />
+              </label>
+            </div>
+
+            <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+              <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-cyan-100">
+                {analysisEnabled ? (analysisRuntimeDepth >= analysisDepthLimit ? 'คิดครบความลึก' : 'กำลังถอดหมาก') : 'ปิดการวิเคราะห์'}
+              </span>
+              <button onClick={restartAnalysis} className="rounded bg-slate-700 px-2 py-1 text-slate-100">
+                คิดใหม่
+              </button>
+            </div>
+
+            {analysisMode === 'selected' && !canAnalyzeSelected && analysisEnabled ? (
+              <p className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-amber-200">
+                แตะเลือกหมากของ{analysisPlayer === 'black' ? 'ดำ' : 'ขาว'}ก่อน เพื่อถอดเฉพาะตาเดินนั้น
+              </p>
+            ) : null}
+
+            {!analysisEnabled ? (
+              <p className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-slate-300">
+                ปิด Thinking window แล้ว เปิดเมื่ออยากถอดหมากเท่านั้น
+              </p>
+            ) : analysisLines.length === 0 ? (
+              <p className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-amber-200">
                 ไม่มีทางเดินที่วิเคราะห์ได้ในตำแหน่งนี้
               </p>
             ) : (
-              <ol className="space-y-2">
+              <ol className="mt-2 space-y-2">
                 {analysisLines.map((line, index) => (
-                  <li key={`${line.pathLabel}-${index}`} className="rounded-lg bg-slate-900 p-2">
+                  <li key={`${line.pathLabel}-${index}-${analysisRuntimeDepth}`} className="rounded-lg bg-slate-900 p-2">
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="font-semibold text-slate-100">#{index + 1} {line.pathLabel}</span>
                       <span
@@ -236,15 +323,21 @@ export default function Home() {
                       </span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-700">
-                      <div className="h-full rounded-full bg-cyan-300" style={{ width: `${line.winChance}%` }} />
+                      <div className="h-full rounded-full bg-cyan-300 transition-all duration-300" style={{ width: `${line.winChance}%` }} />
                     </div>
                     <p className="mt-1 text-xs text-slate-400">
-                      100% = ชนะชัดเจน · 50% = ใกล้เสมอ · 0% = แพ้ชัดเจน
+                      ตัวเลขเปลี่ยนตามเวลาที่คิดลึกขึ้น · 100% แสดงเฉพาะเมื่อเจอเส้นชนะชัดเจน
                     </p>
                   </li>
                 ))}
               </ol>
             )}
+
+            {analysisRequestedDepth > MAX_ANALYSIS_DEPTH ? (
+              <p className="mt-2 text-xs text-amber-200">
+                ตั้งไว้ {analysisRequestedDepth} แต่ Thinking window จำกัดการแสดงสดที่ depth {MAX_ANALYSIS_DEPTH} เพื่อกันเครื่องค้าง
+              </p>
+            ) : null}
           </div>
 
           <p className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-emerald-200">
