@@ -1,7 +1,9 @@
+import { analyzeTopPlayerLines } from './analysis'
 import { bestBoard } from './alphaBeta'
 import { defaultWeights } from './evaluate'
+import { applyMove } from './rules'
 import { defaultValueWeights, normalizeValueWeights } from './valueModel'
-import type { Board, BotLevel, Player, Weights } from './types'
+import type { Board, BotLevel, Pos, Player, Weights } from './types'
 
 export const BOT_DEPTH_BY_LEVEL: Record<Exclude<BotLevel, 'custom'>, number> = {
   easy: 1,
@@ -48,4 +50,26 @@ export function chooseAlphaBetaMove(
 ): Board | null {
   const depth = level === 'custom' ? clampBotDepth(customDepth ?? BOT_DEPTH_BY_LEVEL.hard) : BOT_DEPTH_BY_LEVEL[level]
   return bestBoard(board, turn, depth, weights)
+}
+
+function applyPath(board: Board, path: Pos[]): Board | null {
+  if (path.length < 2) return null
+
+  let nextBoard = board
+  for (let i = 0; i < path.length - 1; i++) {
+    nextBoard = applyMove(nextBoard, path[i], path[i + 1]).board
+  }
+  return nextBoard
+}
+
+export function chooseThinkingWindowMove(
+  board: Board,
+  turn: Player,
+  level: BotLevel,
+  weights: Weights,
+  customDepth?: number,
+): Board | null {
+  const depth = level === 'custom' ? clampBotDepth(customDepth ?? BOT_DEPTH_BY_LEVEL.hard) : BOT_DEPTH_BY_LEVEL[level]
+  const [bestLine] = analyzeTopPlayerLines(board, turn, weights, depth, 1)
+  return bestLine ? applyPath(board, bestLine.path) : null
 }
