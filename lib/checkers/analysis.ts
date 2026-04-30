@@ -25,12 +25,17 @@ type CandidateLine = {
 
 export const MAX_ANALYSIS_DEPTH = 12
 
+export function playableSquareNumber(pos: Pos): number | null {
+  if ((pos.r + pos.c) % 2 !== 1) return null
+  return pos.r * 4 + Math.floor(pos.c / 2) + 1
+}
+
 function samePos(a: Pos, b: Pos): boolean {
   return a.r === b.r && a.c === b.c
 }
 
 function formatSquare(pos: Pos): string {
-  return `${pos.r + 1}-${pos.c + 1}`
+  return String(playableSquareNumber(pos) ?? `${pos.r + 1}-${pos.c + 1}`)
 }
 
 function formatPath(path: Pos[]): string {
