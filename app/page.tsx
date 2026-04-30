@@ -16,7 +16,7 @@ import {
 } from '@/lib/checkers/rules'
 import type { Board, BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: undo / redo move history'
+const RELEASE_NOTE = 'analysis: editable depth inputs'
 type AnalysisMode = 'top5' | 'selected'
 type GameSnapshot = {
   board: Board
@@ -24,6 +24,14 @@ type GameSnapshot = {
   selected: Pos | null
   forced: Pos | null
   msg: string
+}
+
+function clampDepthInput(value: string, fallback: number): number {
+  const trimmed = value.trim()
+  if (trimmed === '') return fallback
+  const depth = Number(trimmed)
+  if (!Number.isFinite(depth)) return fallback
+  return Math.max(1, Math.min(1000, Math.floor(depth)))
 }
 
 export default function Home() {
@@ -36,12 +44,12 @@ export default function Home() {
   const [botEnabled, setBotEnabled] = useState(true)
   const [humanSide, setHumanSide] = useState<Player>('black')
   const [botLevel, setBotLevel] = useState<BotLevel>('hard')
-  const [customBotDepth, setCustomBotDepth] = useState(5)
+  const [customBotDepthInput, setCustomBotDepthInput] = useState('5')
   const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
   const [weights, setWeights] = useState<Weights>(defaultWeights)
   const [analysisEnabled, setAnalysisEnabled] = useState(true)
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('top5')
-  const [analysisRequestedDepth, setAnalysisRequestedDepth] = useState(6)
+  const [analysisRequestedDepthInput, setAnalysisRequestedDepthInput] = useState('6')
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
   const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
   const [past, setPast] = useState<GameSnapshot[]>([])
@@ -54,6 +62,8 @@ export default function Home() {
 
   const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
 
+  const customBotDepth = clampDepthInput(customBotDepthInput, 5)
+  const analysisRequestedDepth = clampDepthInput(analysisRequestedDepthInput, 6)
   const analysisDepthLimit = Math.min(MAX_ANALYSIS_DEPTH, Math.max(1, Math.floor(analysisRequestedDepth)))
   const analysisPlayer = botEnabled ? humanSide : turn
   const analysisFrom = analysisMode === 'selected' ? selected : null
@@ -375,13 +385,13 @@ export default function Home() {
                 <input
                   className="mt-1 w-full rounded bg-slate-700 p-2"
                   type="number"
+                  inputMode="numeric"
                   min={1}
                   max={1000}
-                  value={analysisRequestedDepth}
+                  placeholder="6"
+                  value={analysisRequestedDepthInput}
                   onChange={(e) => {
-                    const nextDepth = Number(e.target.value)
-                    if (!Number.isFinite(nextDepth)) return
-                    setAnalysisRequestedDepth(Math.max(1, Math.min(1000, Math.floor(nextDepth))))
+                    setAnalysisRequestedDepthInput(e.target.value)
                     resetAnalysisProgress()
                   }}
                 />
@@ -529,17 +539,15 @@ export default function Home() {
                   <input
                     className="mt-1 w-full rounded bg-slate-700 p-2"
                     type="number"
+                    inputMode="numeric"
                     min={1}
                     max={1000}
-                    value={customBotDepth}
-                    onChange={(e) => {
-                      const nextDepth = Number(e.target.value)
-                      if (!Number.isFinite(nextDepth)) return
-                      setCustomBotDepth(Math.max(1, Math.min(1000, Math.floor(nextDepth))))
-                    }}
+                    placeholder="5"
+                    value={customBotDepthInput}
+                    onChange={(e) => setCustomBotDepthInput(e.target.value)}
                   />
                   <p className="mt-1 text-xs text-amber-200">
-                    ค่า depth สูงมากอาจทำให้เครื่องช้า/ค้าง โดยเฉพาะบนมือถือ แนะนำ 6-8 ก่อน
+                    ลบช่องนี้ให้ว่างก่อนได้ ระหว่างว่างระบบจะใช้ค่าเดิม 5 ชั่วคราว ค่า depth สูงมากอาจทำให้เครื่องช้า/ค้าง
                   </p>
                 </label>
               )}
