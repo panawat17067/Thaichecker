@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { analyzeTopPlayerLines } from '@/lib/checkers/analysis'
 import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
 import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
@@ -14,20 +15,7 @@ import {
 } from '@/lib/checkers/rules'
 import type { BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'fix: support Thai checkers rules'
-
-const PUBLIC_AI_SOURCES = [
-  {
-    name: 'CU_Makhos (PyTorch, AlphaGo-style + minimax)',
-    model: 'train_iter_268.pth.tar',
-    url: 'https://github.com/51616/CU_Makhos',
-  },
-  {
-    name: 'witchu/alphazero (Keras, AlphaZero-style)',
-    model: 'model-45k.h5',
-    url: 'https://github.com/witchu/alphazero',
-  },
-]
+const RELEASE_NOTE = 'analysis: show top 5 player move paths'
 
 export default function Home() {
   const [board, setBoard] = useState(initBoard)
@@ -48,6 +36,20 @@ export default function Home() {
   }, [])
 
   const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
+
+  const analysisDepth = useMemo(() => {
+    if (botLevel === 'custom') return customBotDepth
+    if (botLevel === 'easy') return 1
+    if (botLevel === 'normal') return 3
+    return 5
+  }, [botLevel, customBotDepth])
+
+  const analysisPlayer = botEnabled ? humanSide : turn
+  const isBotThinking = botEnabled && botEngine === 'alpha-beta' && turn !== humanSide && !forced
+  const analysisLines = useMemo(
+    () => analyzeTopPlayerLines(board, analysisPlayer, weights, analysisDepth, 5),
+    [analysisDepth, analysisPlayer, board, weights],
+  )
 
   const legalMoves = (from: Pos): Pos[] => {
     const piece = board[from.r][from.c]
@@ -197,26 +199,57 @@ export default function Home() {
           <h1 className="text-xl font-bold">หมากฮอสไทย</h1>
           <p>สถานะ: {msg}</p>
           <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
+
+          <div className="rounded-xl border border-cyan-400/50 bg-slate-950/60 p-3 shadow-lg shadow-cyan-950/40">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold text-cyan-200">Thinking window</p>
+                <p className="text-xs text-slate-300">
+                  วิเคราะห์ 5 ทางเดินที่ดีที่สุดของ{analysisPlayer === 'black' ? 'ดำ' : 'ขาว'} · depth {Math.min(analysisDepth, 6)}
+                </p>
+              </div>
+              <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-xs text-cyan-100">
+                {isBotThinking ? 'AI thinking' : 'พร้อม'}
+              </span>
+            </div>
+
+            {analysisLines.length === 0 ? (
+              <p className="rounded-md bg-slate-900 px-3 py-2 text-sm text-amber-200">
+                ไม่มีทางเดินที่วิเคราะห์ได้ในตำแหน่งนี้
+              </p>
+            ) : (
+              <ol className="space-y-2">
+                {analysisLines.map((line, index) => (
+                  <li key={`${line.pathLabel}-${index}`} className="rounded-lg bg-slate-900 p-2">
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-100">#{index + 1} {line.pathLabel}</span>
+                      <span
+                        className={`rounded px-2 py-0.5 text-xs font-bold ${
+                          line.winChance >= 70
+                            ? 'bg-emerald-500/20 text-emerald-200'
+                            : line.winChance <= 30
+                              ? 'bg-red-500/20 text-red-200'
+                              : 'bg-amber-500/20 text-amber-200'
+                        }`}
+                      >
+                        {line.winChance}%
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-700">
+                      <div className="h-full rounded-full bg-cyan-300" style={{ width: `${line.winChance}%` }} />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">
+                      100% = ชนะชัดเจน · 50% = ใกล้เสมอ · 0% = แพ้ชัดเจน
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+
           <p className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-emerald-200">
             อัปเดตล่าสุด: <span className="font-semibold">{RELEASE_NOTE}</span>
           </p>
-          <p className="text-xs text-amber-200">
-            หมายเหตุ: ในเว็บนี้ใช้งานได้ทันทีเฉพาะ Alpha-Beta. จากการสำรวจยังไม่พบโมเดล Deep Q-Learning สาธารณะที่พร้อมใช้ตรงกับหมากฮอสไทย
-          </p>
-          <div className="rounded-md border border-slate-600 p-3 text-xs space-y-2">
-            <p className="font-semibold text-slate-200">แหล่งโมเดลสาธารณะที่แนะนำ</p>
-            {PUBLIC_AI_SOURCES.map((src) => (
-              <a
-                key={src.url}
-                href={src.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block underline text-cyan-300"
-              >
-                {src.name} — {src.model}
-              </a>
-            ))}
-          </div>
 
           <label className="block">
             เริ่มก่อน
