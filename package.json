@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "train:alpha-beta": "node scripts/train-alpha-beta.mjs"
+    "train:alpha-beta": "node scripts/train-alpha-beta.mjs",
+    "train:value-model": "node scripts/train-value-model.mjs"
   },
   "dependencies": {
     "next": "16.2.4",
