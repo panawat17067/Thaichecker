@@ -179,7 +179,7 @@ export default function Home() {
     <main className="min-h-screen bg-slate-950 text-white p-3 sm:p-4">
       <section className="mx-auto w-full max-w-[1200px] aspect-auto md:aspect-video bg-slate-900 rounded-2xl p-3 sm:p-4 md:p-6 shadow-2xl grid grid-cols-1 md:grid-cols-[1fr_300px] gap-4 md:gap-6">
         <div className="flex items-center justify-center">
-          <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[92vw] sm:max-w-[78vh] aspect-square border-4 border-amber-700 rounded-xl overflow-hidden touch-manipulation select-none">
+          <div className="grid grid-cols-8 grid-rows-8 w-full max-w-[92vw] sm:max-w-[78vh] aspect-square border-4 border-amber-700 rounded-xl overflow-hidden touch-manipulation select-none rotate-180">
             {board.map((row, r) =>
               row.map((cell, c) => {
                 const dark = (r + c) % 2 === 1
@@ -203,7 +203,7 @@ export default function Home() {
                     aria-label={squareNo ? `ช่องเดิน ${squareNo}` : `ช่องว่าง ${r + 1}-${c + 1}`}
                   >
                     {squareNo && (
-                      <span className="absolute right-1 top-1 z-20 rounded bg-black/30 px-1 text-[10px] font-bold leading-none text-amber-100 sm:text-xs">
+                      <span className="absolute right-1 top-1 z-20 rounded bg-black/30 px-1 text-[10px] font-bold leading-none text-amber-100 rotate-180 sm:text-xs">
                         {squareNo}
                       </span>
                     )}
@@ -214,7 +214,7 @@ export default function Home() {
 
                     {cell && (
                       <span
-                        className={`absolute inset-[3px] sm:inset-1 rounded-full border-2 sm:border-4 ${
+                        className={`absolute inset-[3px] sm:inset-1 rounded-full border-2 sm:border-4 rotate-180 ${
                           cell.player === 'black'
                             ? 'bg-neutral-900 border-neutral-700 text-yellow-300'
                             : 'bg-gray-100 border-gray-300 text-red-600'
@@ -236,7 +236,7 @@ export default function Home() {
           <p>โฟกัสหลัก: ถอดหมาก วิเคราะห์ทางเดิน และทดลองเล่นกับบอท Alpha-Beta</p>
           <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
           <p className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-            เลขบนกระดานแสดงเฉพาะช่องเดินจริง 1-32 ตามกระดานหมากฮอสไทย และตรงกับเส้นทางใน Thinking window เช่น 9 → 14
+            กระดานถูกพลิกให้ดำเริ่มจากด้านล่าง เลข 1-32 แสดงเฉพาะช่องเดินจริง และตรงกับเส้นทางใน Thinking window เช่น 9 → 14
           </p>
 
           <div className="rounded-xl border border-cyan-400/50 bg-slate-950/60 p-3 shadow-lg shadow-cyan-950/40">
