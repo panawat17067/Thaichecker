@@ -567,7 +567,18 @@ export default function Home() {
             <select
               className="mt-1 w-full rounded bg-slate-700 p-2"
               value={starter}
-              onChange={(e) => setStarter(e.target.value as Player)}
+              onChange={(e) => {
+                const s = e.target.value as Player
+                setStarter(s)
+
+                // 👇 FIX ตรงนี้
+                // ถ้าขาวเริ่ม → คนต้องเป็นดำ (บอทเป็นขาว)
+                // ถ้าดำเริ่ม → คนเป็นขาว (บอทเป็นดำ)
+                setHumanSide(s === 'white' ? 'black' : 'white')
+
+                setReviewMode(false)
+                resetAnalysisProgress()
+              }}
             >
               <option value="black">ดำเดินก่อน (Default)</option>
               <option value="white">ขาวเดินก่อน</option>
