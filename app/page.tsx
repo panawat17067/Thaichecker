@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { analyzeTopPlayerLines, MAX_ANALYSIS_DEPTH } from '@/lib/checkers/analysis'
+import { analyzeTopPlayerLines, MAX_ANALYSIS_DEPTH, playableSquareNumber } from '@/lib/checkers/analysis'
 import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
 import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
@@ -15,7 +15,7 @@ import {
 } from '@/lib/checkers/rules'
 import type { BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: controllable realtime thinking window'
+const RELEASE_NOTE = 'analysis: Thai 1-32 board notation'
 type AnalysisMode = 'top5' | 'selected'
 
 export default function Home() {
@@ -43,16 +43,8 @@ export default function Home() {
 
   const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
 
-  const botDepth = useMemo(() => {
-    if (botLevel === 'custom') return customBotDepth
-    if (botLevel === 'easy') return 1
-    if (botLevel === 'normal') return 3
-    return 5
-  }, [botLevel, customBotDepth])
-
   const analysisDepthLimit = Math.min(MAX_ANALYSIS_DEPTH, Math.max(1, Math.floor(analysisRequestedDepth)))
   const analysisPlayer = botEnabled ? humanSide : turn
-  const isBotThinking = botEnabled && botEngine === 'alpha-beta' && turn !== humanSide && !forced
   const analysisFrom = analysisMode === 'selected' ? selected : null
   const selectedPiece = selected ? board[selected.r]?.[selected.c] : null
   const canAnalyzeSelected = Boolean(selected && selectedPiece && selectedPiece.player === analysisPlayer)
@@ -191,6 +183,7 @@ export default function Home() {
             {board.map((row, r) =>
               row.map((cell, c) => {
                 const dark = (r + c) % 2 === 1
+                const squareNo = dark ? playableSquareNumber({ r, c }) : null
                 const isSel = selected?.r === r && selected?.c === c
                 const canMove = selected
                   ? legalMoves(selected).some((m) => m.r === r && m.c === c)
@@ -207,15 +200,13 @@ export default function Home() {
                         ? 'outline outline-4 outline-cyan-300 outline-offset-[-2px]'
                         : ''
                     }`}
-                    aria-label={`ช่อง ${r + 1}-${c + 1}`}
+                    aria-label={squareNo ? `ช่องเดิน ${squareNo}` : `ช่องว่าง ${r + 1}-${c + 1}`}
                   >
-                    <span
-                      className={`absolute left-0.5 top-0.5 z-20 rounded px-0.5 text-[8px] font-bold leading-none sm:text-[10px] ${
-                        dark ? 'bg-black/45 text-amber-100' : 'bg-white/70 text-amber-900'
-                      }`}
-                    >
-                      {r + 1}-{c + 1}
-                    </span>
+                    {squareNo && (
+                      <span className="absolute right-1 top-1 z-20 rounded bg-black/30 px-1 text-[10px] font-bold leading-none text-amber-100 sm:text-xs">
+                        {squareNo}
+                      </span>
+                    )}
 
                     {canMove && (
                       <span className="absolute inset-0 m-auto h-3.5 w-3.5 rounded-full bg-cyan-300/90" />
@@ -240,11 +231,12 @@ export default function Home() {
         </div>
 
         <aside className="bg-slate-800 rounded-xl p-4 space-y-3 text-sm">
-          <h1 className="text-xl font-bold">หมากฮอสไทย</h1>
+          <h1 className="text-xl font-bold">โปรแกรมถอดหมากฮอสไทย</h1>
           <p>สถานะ: {msg}</p>
+          <p>โฟกัสหลัก: ถอดหมาก วิเคราะห์ทางเดิน และทดลองเล่นกับบอท Alpha-Beta</p>
           <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
           <p className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-            เลขบนกระดานใช้รูปแบบ แถว-คอลัมน์ เช่น 3-6 และตรงกับเส้นทางใน Thinking window
+            เลขบนกระดานแสดงเฉพาะช่องเดินจริง 1-32 ตามกระดานหมากฮอสไทย และตรงกับเส้นทางใน Thinking window เช่น 9 → 14
           </p>
 
           <div className="rounded-xl border border-cyan-400/50 bg-slate-950/60 p-3 shadow-lg shadow-cyan-950/40">
@@ -368,14 +360,14 @@ export default function Home() {
           </label>
 
           <label className="block">
-            โหมดเกม
+            โหมด
             <select
               className="mt-1 w-full rounded bg-slate-700 p-2"
               value={botEnabled ? 'bot' : 'human'}
               onChange={(e) => setBotEnabled(e.target.value === 'bot')}
             >
-              <option value="bot">เล่นกับบอท AI</option>
-              <option value="human">คน vs คน</option>
+              <option value="bot">ถอดหมาก + ทดลองกับบอท</option>
+              <option value="human">ถอดหมาก / คน vs คน</option>
             </select>
           </label>
 
@@ -394,7 +386,7 @@ export default function Home() {
               </label>
 
               <label className="block">
-                เอนจินบอท
+                เอนจินวิเคราะห์/บอท
                 <select
                   className="mt-1 w-full rounded bg-slate-700 p-2"
                   value={botEngine}
@@ -406,7 +398,7 @@ export default function Home() {
               </label>
 
               <label className="block">
-                ระดับ AI
+                ระดับบอททดลองเล่น
                 <select
                   className="mt-1 w-full rounded bg-slate-700 p-2"
                   value={botLevel}
@@ -421,7 +413,7 @@ export default function Home() {
 
               {botLevel === 'custom' && (
                 <label className="block">
-                  Depth ปรับเอง (1-1000)
+                  Depth บอททดลองเล่น (1-1000)
                   <input
                     className="mt-1 w-full rounded bg-slate-700 p-2"
                     type="number"
@@ -448,7 +440,7 @@ export default function Home() {
             onClick={reset}
             className="w-full py-2 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black font-semibold"
           >
-            เริ่มเกมใหม่
+            ตั้งกระดานใหม่
           </button>
 
           <a
