@@ -6,9 +6,24 @@ type Player = 'black' | 'white'
 type Piece = { player: Player; king: boolean }
 type Pos = { r: number; c: number }
 type BotLevel = 'normal' | 'expert'
+type BotEngine = 'alpha-beta' | 'deep-q'
 
 const BOARD = 8
 const RELEASE_NOTE = 'fix: support Thai checkers rules'
+
+const PUBLIC_AI_SOURCES = [
+  {
+    name: 'CU_Makhos (PyTorch, AlphaGo-style + minimax)',
+    model: 'train_iter_268.pth.tar',
+    url: 'https://github.com/51616/CU_Makhos',
+  },
+  {
+    name: 'witchu/alphazero (Keras, AlphaZero-style)',
+    model: 'model-45k.h5',
+    url: 'https://github.com/witchu/alphazero',
+  },
+]
+
 const kingDirs = [
   [1, 1],
   [1, -1],
@@ -305,6 +320,7 @@ export default function Home() {
   const [botEnabled, setBotEnabled] = useState(true)
   const [humanSide, setHumanSide] = useState<Player>('black')
   const [botLevel, setBotLevel] = useState<BotLevel>('expert')
+  const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
 
   const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
 
@@ -395,6 +411,8 @@ export default function Home() {
 
   useEffect(() => {
     if (!botEnabled || turn === humanSide || forced) return
+
+    if (botEngine === 'deep-q') return
     const timer = setTimeout(() => {
       const depth = botLevel === 'expert' ? 8 : 4
       const next = bestBoard(board, turn, depth)
@@ -417,7 +435,7 @@ export default function Home() {
     }, 250)
 
     return () => clearTimeout(timer)
-  }, [board, botEnabled, botLevel, forced, humanSide, turn])
+  }, [board, botEnabled, botEngine, botLevel, forced, humanSide, turn])
 
   const reset = () => {
     setBoard(initBoard())
@@ -482,6 +500,23 @@ export default function Home() {
           <p className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-emerald-200">
             อัปเดตล่าสุด: <span className="font-semibold">{RELEASE_NOTE}</span>
           </p>
+          <p className="text-xs text-amber-200">
+            หมายเหตุ: ในเว็บนี้ใช้งานได้ทันทีเฉพาะ Alpha-Beta. จากการสำรวจยังไม่พบโมเดล Deep Q-Learning สาธารณะที่พร้อมใช้ตรงกับหมากฮอสไทย
+          </p>
+          <div className="rounded-md border border-slate-600 p-3 text-xs space-y-2">
+            <p className="font-semibold text-slate-200">แหล่งโมเดลสาธารณะที่แนะนำ</p>
+            {PUBLIC_AI_SOURCES.map((src) => (
+              <a
+                key={src.url}
+                href={src.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block underline text-cyan-300"
+              >
+                {src.name} — {src.model}
+              </a>
+            ))}
+          </div>
 
           <label className="block">
             เริ่มก่อน
@@ -518,6 +553,18 @@ export default function Home() {
                 >
                   <option value="black">เดินก่อน (ดำ)</option>
                   <option value="white">เดินหลัง (ขาว)</option>
+                </select>
+              </label>
+
+              <label className="block">
+                เอนจินบอท
+                <select
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  value={botEngine}
+                  onChange={(e) => setBotEngine(e.target.value as BotEngine)}
+                >
+                  <option value="alpha-beta">Alpha-Beta Pruning (พร้อมใช้)</option>
+                  <option value="deep-q">Deep Q-Learning (ยังไม่พบแหล่งพร้อมใช้)</option>
                 </select>
               </label>
 
