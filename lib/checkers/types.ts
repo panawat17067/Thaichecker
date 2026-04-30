@@ -1,3 +1,5 @@
+import type { ValueWeights } from './valueModel'
+
 export type Player = 'black' | 'white'
 export type Piece = { player: Player; king: boolean }
 export type Pos = { r: number; c: number }
@@ -14,4 +16,5 @@ export type Weights = {
   kingAdvance: number
   valueBias?: number
   valueScale?: number
+  valueWeights?: Partial<ValueWeights>
 }
