@@ -12,4 +12,6 @@ export type Weights = {
   mobility: number
   captureBonus: number
   kingAdvance: number
+  valueBias?: number
+  valueScale?: number
 }
