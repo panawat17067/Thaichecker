@@ -209,6 +209,14 @@ export default function Home() {
                     }`}
                     aria-label={`ช่อง ${r + 1}-${c + 1}`}
                   >
+                    <span
+                      className={`absolute left-0.5 top-0.5 z-20 rounded px-0.5 text-[8px] font-bold leading-none sm:text-[10px] ${
+                        dark ? 'bg-black/45 text-amber-100' : 'bg-white/70 text-amber-900'
+                      }`}
+                    >
+                      {r + 1}-{c + 1}
+                    </span>
+
                     {canMove && (
                       <span className="absolute inset-0 m-auto h-3.5 w-3.5 rounded-full bg-cyan-300/90" />
                     )}
@@ -235,6 +243,9 @@ export default function Home() {
           <h1 className="text-xl font-bold">หมากฮอสไทย</h1>
           <p>สถานะ: {msg}</p>
           <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
+          <p className="rounded-md border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+            เลขบนกระดานใช้รูปแบบ แถว-คอลัมน์ เช่น 3-6 และตรงกับเส้นทางใน Thinking window
+          </p>
 
           <div className="rounded-xl border border-cyan-400/50 bg-slate-950/60 p-3 shadow-lg shadow-cyan-950/40">
             <div className="mb-2 flex items-center justify-between gap-2">
