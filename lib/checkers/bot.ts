@@ -2,10 +2,15 @@ import { bestBoard } from './alphaBeta'
 import { defaultWeights } from './evaluate'
 import type { Board, BotLevel, Player, Weights } from './types'
 
-export const BOT_DEPTH_BY_LEVEL: Record<BotLevel, number> = {
+export const BOT_DEPTH_BY_LEVEL: Record<Exclude<BotLevel, 'custom'>, number> = {
   easy: 1,
   normal: 3,
   hard: 5,
+}
+
+export function clampBotDepth(depth: number): number {
+  if (!Number.isFinite(depth)) return BOT_DEPTH_BY_LEVEL.hard
+  return Math.max(1, Math.min(1000, Math.floor(depth)))
 }
 
 export async function loadAlphaBetaWeights(): Promise<Weights> {
@@ -25,6 +30,13 @@ export async function loadAlphaBetaWeights(): Promise<Weights> {
   }
 }
 
-export function chooseAlphaBetaMove(board: Board, turn: Player, level: BotLevel, weights: Weights): Board | null {
-  return bestBoard(board, turn, BOT_DEPTH_BY_LEVEL[level], weights)
+export function chooseAlphaBetaMove(
+  board: Board,
+  turn: Player,
+  level: BotLevel,
+  weights: Weights,
+  customDepth?: number,
+): Board | null {
+  const depth = level === 'custom' ? clampBotDepth(customDepth ?? BOT_DEPTH_BY_LEVEL.hard) : BOT_DEPTH_BY_LEVEL[level]
+  return bestBoard(board, turn, depth, weights)
 }
