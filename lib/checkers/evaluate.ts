@@ -1,5 +1,6 @@
 import type { Board, Player, Weights } from './types'
 import { allCaptureStarts, nextPlayer, stepMoves } from './rules'
+import { defaultValueWeights, evaluateValueBoard } from './valueModel'
 
 export const defaultWeights: Weights = {
   man: 2,
@@ -7,9 +8,11 @@ export const defaultWeights: Weights = {
   mobility: 0.15,
   captureBonus: 0.4,
   kingAdvance: 0.05,
+  valueBias: 0,
+  valueScale: 1,
 }
 
-export function evaluateBoard(board: Board, root: Player, weights: Weights): number {
+function evaluateClassicBoard(board: Board, root: Player, weights: Weights): number {
   let score = 0
   let mobilityRoot = 0
   let mobilityEnemy = 0
@@ -19,7 +22,7 @@ export function evaluateBoard(board: Board, root: Player, weights: Weights): num
       const piece = board[r][c]
       if (!piece) continue
       const base = piece.king ? weights.king : weights.man
-      const advance = piece.king ? 0 : (piece.player === 'black' ? r : (7 - r)) * weights.kingAdvance
+      const advance = piece.king ? 0 : (piece.player === 'black' ? r : 7 - r) * weights.kingAdvance
       score += piece.player === root ? base + advance : -(base + advance)
 
       const m = stepMoves(board, { r, c }).length
@@ -35,4 +38,10 @@ export function evaluateBoard(board: Board, root: Player, weights: Weights): num
   score += (rootCaps - enemyCaps) * weights.captureBonus
 
   return score
+}
+
+export function evaluateBoard(board: Board, root: Player, weights: Weights): number {
+  const classicScore = evaluateClassicBoard(board, root, weights)
+  const valueScore = evaluateValueBoard(board, root, defaultValueWeights)
+  return classicScore + (weights.valueBias ?? 0) + valueScore * (weights.valueScale ?? 1)
 }
