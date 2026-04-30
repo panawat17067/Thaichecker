@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { analyzeTopPlayerLines, MAX_ANALYSIS_DEPTH, playableSquareNumber } from '@/lib/checkers/analysis'
 import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
+import { deepSolvePosition, type DeepSolveResult } from '@/lib/checkers/deepSolve'
 import { defaultWeights } from '@/lib/checkers/evaluate'
 import {
   allCaptureStarts,
@@ -16,8 +17,8 @@ import {
 } from '@/lib/checkers/rules'
 import type { Board, BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-const RELEASE_NOTE = 'analysis: default to one best move'
-type AnalysisMode = 'best1' | 'top5' | 'selected'
+const RELEASE_NOTE = 'analysis: selective deep solve mode'
+type AnalysisMode = 'best1' | 'top5' | 'selected' | 'deep'
 type GameSnapshot = {
   board: Board
   turn: Player
@@ -52,6 +53,10 @@ export default function Home() {
   const [analysisRequestedDepthInput, setAnalysisRequestedDepthInput] = useState('6')
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)
   const [analysisElapsedMs, setAnalysisElapsedMs] = useState(0)
+  const [deepSolveDepthInput, setDeepSolveDepthInput] = useState('18')
+  const [deepSolveTimeInput, setDeepSolveTimeInput] = useState('5000')
+  const [deepSolveResult, setDeepSolveResult] = useState<DeepSolveResult | null>(null)
+  const [deepSolveRunning, setDeepSolveRunning] = useState(false)
   const [past, setPast] = useState<GameSnapshot[]>([])
   const [future, setFuture] = useState<GameSnapshot[]>([])
   const [reviewMode, setReviewMode] = useState(false)
@@ -64,6 +69,8 @@ export default function Home() {
 
   const customBotDepth = clampDepthInput(customBotDepthInput, 5)
   const analysisRequestedDepth = clampDepthInput(analysisRequestedDepthInput, 6)
+  const deepSolveDepth = Math.max(1, Math.min(24, clampDepthInput(deepSolveDepthInput, 18)))
+  const deepSolveTimeMs = Math.max(300, Math.min(60_000, clampDepthInput(deepSolveTimeInput, 5000)))
   const analysisDepthLimit = Math.min(MAX_ANALYSIS_DEPTH, Math.max(1, Math.floor(analysisRequestedDepth)))
   const analysisPlayer = botEnabled ? humanSide : turn
   const analysisFrom = analysisMode === 'selected' ? selected : null
@@ -84,7 +91,7 @@ export default function Home() {
   }, [analysisDepthLimit, analysisElapsedMs, analysisEnabled])
 
   const analysisLines = useMemo(() => {
-    if (!analysisEnabled) return []
+    if (!analysisEnabled || analysisMode === 'deep') return []
     if (analysisMode === 'selected' && !canAnalyzeSelected) return []
     return analyzeTopPlayerLines(board, analysisPlayer, weights, analysisRuntimeDepth, analysisLimit, analysisFrom)
   }, [analysisEnabled, analysisFrom, analysisLimit, analysisMode, analysisPlayer, analysisRuntimeDepth, board, canAnalyzeSelected, weights])
@@ -92,6 +99,7 @@ export default function Home() {
   const resetAnalysisProgress = () => {
     setAnalysisRuntimeDepth(1)
     setAnalysisElapsedMs(0)
+    setDeepSolveResult(null)
   }
 
   const makeSnapshot = (): GameSnapshot => ({
@@ -139,6 +147,17 @@ export default function Home() {
     setReviewMode(false)
     setFuture([])
     resetAnalysisProgress()
+  }
+
+  const runDeepSolve = () => {
+    if (deepSolveRunning) return
+    setDeepSolveRunning(true)
+    setDeepSolveResult(null)
+    window.setTimeout(() => {
+      const result = deepSolvePosition(board, analysisPlayer, weights, deepSolveDepth, deepSolveTimeMs)
+      setDeepSolveResult(result)
+      setDeepSolveRunning(false)
+    }, 20)
   }
 
   const legalMoves = (from: Pos): Pos[] => {
@@ -262,7 +281,9 @@ export default function Home() {
       ? 'ถอดเฉพาะหมากที่เลือก'
       : analysisMode === 'top5'
         ? 'วิเคราะห์ 5 ทางเดินที่ดีที่สุด'
-        : 'วิเคราะห์ 1 ทางเดินที่ดีที่สุด'
+        : analysisMode === 'deep'
+          ? 'ค้นลึกหาเส้นชนะ'
+          : 'วิเคราะห์ 1 ทางเดินที่ดีที่สุด'
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-3 sm:p-4">
@@ -387,6 +408,7 @@ export default function Home() {
                   <option value="best1">1 ทางเดินที่ดีที่สุด (เร็ว/แนะนำ)</option>
                   <option value="top5">5 ทางเดินที่ดีที่สุด</option>
                   <option value="selected">เฉพาะตาที่เลือก</option>
+                  <option value="deep">ค้นลึกหาเส้นชนะ</option>
                 </select>
               </label>
               <label className="block">
@@ -413,6 +435,67 @@ export default function Home() {
               </p>
             ) : null}
 
+            {analysisMode === 'deep' ? (
+              <div className="mt-2 rounded-lg border border-purple-400/40 bg-purple-500/10 p-3 text-xs text-purple-100">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    Deep depth
+                    <input
+                      className="mt-1 w-full rounded bg-slate-700 p-2"
+                      type="number"
+                      inputMode="numeric"
+                      min={1}
+                      max={24}
+                      value={deepSolveDepthInput}
+                      onChange={(e) => setDeepSolveDepthInput(e.target.value)}
+                    />
+                  </label>
+                  <label className="block">
+                    เวลา ms
+                    <input
+                      className="mt-1 w-full rounded bg-slate-700 p-2"
+                      type="number"
+                      inputMode="numeric"
+                      min={300}
+                      max={60000}
+                      value={deepSolveTimeInput}
+                      onChange={(e) => setDeepSolveTimeInput(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <button
+                  onClick={runDeepSolve}
+                  disabled={deepSolveRunning}
+                  className="mt-2 w-full rounded bg-purple-400 px-3 py-2 font-semibold text-slate-950 disabled:opacity-50"
+                >
+                  {deepSolveRunning ? 'กำลังค้นลึก...' : 'ค้นลึกหาเส้นชนะ'}
+                </button>
+                <p className="mt-2 text-purple-200">
+                  โหมดนี้ใช้ selective search + late move reduction + cache เพื่อหา forced win/loss ไม่ใช่ค้นทุกทางแบบ brute force
+                </p>
+                {deepSolveResult ? (
+                  <div className="mt-2 rounded bg-slate-950/70 p-2">
+                    <p className="font-semibold">
+                      {deepSolveResult.status === 'proven-win'
+                        ? 'พบเส้นบังคับชนะ'
+                        : deepSolveResult.status === 'proven-loss'
+                          ? 'พบเส้นบังคับแพ้'
+                          : deepSolveResult.status === 'timeout'
+                            ? 'หมดเวลาก่อนพิสูจน์'
+                            : deepSolveResult.status === 'advantage'
+                              ? 'ได้เปรียบจากการค้นลึก'
+                              : 'ยังไม่ชัดเจน'}{' '}
+                      · {deepSolveResult.winChance}%
+                    </p>
+                    <p>เส้นหลัก: {deepSolveResult.bestLine || '-'}</p>
+                    <p>
+                      depth {deepSolveResult.depthReached}/{deepSolveDepth} · nodes {deepSolveResult.nodes.toLocaleString()} · {(deepSolveResult.elapsedMs / 1000).toFixed(2)}s
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mt-2 flex items-center justify-between gap-2 text-xs">
               <span className="rounded-full bg-cyan-500/20 px-2 py-1 text-cyan-100">
                 {analysisEnabled ? (analysisRuntimeDepth >= analysisDepthLimit ? 'คิดครบความลึก' : 'กำลังถอดหมาก') : 'ปิดการวิเคราะห์'}
@@ -432,7 +515,7 @@ export default function Home() {
               <p className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-slate-300">
                 ปิด Thinking window แล้ว เปิดเมื่ออยากถอดหมากเท่านั้น
               </p>
-            ) : analysisLines.length === 0 ? (
+            ) : analysisMode === 'deep' ? null : analysisLines.length === 0 ? (
               <p className="mt-2 rounded-md bg-slate-900 px-3 py-2 text-sm text-amber-200">
                 ไม่มีทางเดินที่วิเคราะห์ได้ในตำแหน่งนี้
               </p>
