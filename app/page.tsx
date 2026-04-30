@@ -1,190 +1,52 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { chooseAlphaBetaMove, loadAlphaBetaWeights } from '@/lib/checkers/bot'
+import { defaultWeights } from '@/lib/checkers/evaluate'
+import {
+  allCaptureStarts,
+  applyMove,
+  initBoard,
+  jumpMoves,
+  nextPlayer,
+  stepMoves,
+  winnerByPieces,
+} from '@/lib/checkers/rules'
+import type { BotEngine, BotLevel, Player, Pos, Weights } from '@/lib/checkers/types'
 
-type Player = 'black' | 'white'
-type Piece = { player: Player; king: boolean }
-type Pos = { r: number; c: number }
+const RELEASE_NOTE = 'fix: support Thai checkers rules'
 
-const BOARD = 8
-const kingDirs = [
-  [1, 1],
-  [1, -1],
-  [-1, 1],
-  [-1, -1],
+const PUBLIC_AI_SOURCES = [
+  {
+    name: 'CU_Makhos (PyTorch, AlphaGo-style + minimax)',
+    model: 'train_iter_268.pth.tar',
+    url: 'https://github.com/51616/CU_Makhos',
+  },
+  {
+    name: 'witchu/alphazero (Keras, AlphaZero-style)',
+    model: 'model-45k.h5',
+    url: 'https://github.com/witchu/alphazero',
+  },
 ]
-
-function initBoard() {
-  const b: (Piece | null)[][] = Array.from({ length: BOARD }, () =>
-    Array(BOARD).fill(null)
-  )
-
-  for (let r = 0; r < 2; r++) {
-    for (let c = 0; c < BOARD; c++) {
-      if ((r + c) % 2 === 1) b[r][c] = { player: 'black', king: false }
-    }
-  }
-
-  for (let r = 6; r < 8; r++) {
-    for (let c = 0; c < BOARD; c++) {
-      if ((r + c) % 2 === 1) b[r][c] = { player: 'white', king: false }
-    }
-  }
-
-  return b
-}
-
-function clone(board: (Piece | null)[][]) {
-  return board.map((row) => row.map((p) => (p ? { ...p } : null)))
-}
-
-const inb = (r: number, c: number) =>
-  r >= 0 && r < BOARD && c >= 0 && c < BOARD
-
-function manDirs(piece: Piece) {
-  return piece.player === 'black'
-    ? [
-        [1, 1],
-        [1, -1],
-      ]
-    : [
-        [-1, 1],
-        [-1, -1],
-      ]
-}
-
-function jumpMoves(board: (Piece | null)[][], from: Pos): Pos[] {
-  const piece = board[from.r][from.c]
-  if (!piece) return []
-
-  const out: Pos[] = []
-
-  if (!piece.king) {
-    for (const [dr, dc] of manDirs(piece)) {
-      const mr = from.r + dr
-      const mc = from.c + dc
-      const tr = from.r + dr * 2
-      const tc = from.c + dc * 2
-
-      if (!inb(mr, mc) || !inb(tr, tc) || board[tr][tc]) continue
-
-      const mid = board[mr][mc]
-      if (mid && mid.player !== piece.player) out.push({ r: tr, c: tc })
-    }
-
-    return out
-  }
-
-  for (const [dr, dc] of kingDirs) {
-    let r = from.r + dr
-    let c = from.c + dc
-
-    while (inb(r, c) && !board[r][c]) {
-      r += dr
-      c += dc
-    }
-
-    if (!inb(r, c)) continue
-
-    const target = board[r][c]
-    if (!target || target.player === piece.player) continue
-
-    const landR = r + dr
-    const landC = c + dc
-
-    if (inb(landR, landC) && !board[landR][landC]) {
-      out.push({ r: landR, c: landC })
-    }
-  }
-
-  return out
-}
-
-function stepMoves(board: (Piece | null)[][], from: Pos): Pos[] {
-  const piece = board[from.r][from.c]
-  if (!piece) return []
-
-  const out: Pos[] = []
-
-  if (!piece.king) {
-    for (const [dr, dc] of manDirs(piece)) {
-      const nr = from.r + dr
-      const nc = from.c + dc
-      if (inb(nr, nc) && !board[nr][nc]) out.push({ r: nr, c: nc })
-    }
-
-    return out
-  }
-
-  for (const [dr, dc] of kingDirs) {
-    let r = from.r + dr
-    let c = from.c + dc
-
-    while (inb(r, c) && !board[r][c]) {
-      out.push({ r, c })
-      r += dr
-      c += dc
-    }
-  }
-
-  return out
-}
-
-function allCaptureStarts(board: (Piece | null)[][], turn: Player): Pos[] {
-  const starts: Pos[] = []
-
-  for (let r = 0; r < BOARD; r++) {
-    for (let c = 0; c < BOARD; c++) {
-      const piece = board[r][c]
-      if (
-        piece &&
-        piece.player === turn &&
-        jumpMoves(board, { r, c }).length > 0
-      ) {
-        starts.push({ r, c })
-      }
-    }
-  }
-
-  return starts
-}
-
-function capturedBetween(
-  board: (Piece | null)[][],
-  from: Pos,
-  to: Pos
-): Pos | null {
-  const dr = Math.sign(to.r - from.r)
-  const dc = Math.sign(to.c - from.c)
-
-  let r = from.r + dr
-  let c = from.c + dc
-  let found: Pos | null = null
-
-  while (r !== to.r && c !== to.c) {
-    if (board[r][c]) {
-      if (found) return null
-      found = { r, c }
-    }
-
-    r += dr
-    c += dc
-  }
-
-  return found
-}
 
 export default function Home() {
   const [board, setBoard] = useState(initBoard)
   const [turn, setTurn] = useState<Player>('black')
   const [selected, setSelected] = useState<Pos | null>(null)
   const [forced, setForced] = useState<Pos | null>(null)
-  const [msg, setMsg] = useState('ตาดำเริ่มก่อน')
+  const [msg, setMsg] = useState('ตาดำเริ่มก่อน (Default)')
+  const [starter, setStarter] = useState<Player>('black')
+  const [botEnabled, setBotEnabled] = useState(true)
+  const [humanSide, setHumanSide] = useState<Player>('black')
+  const [botLevel, setBotLevel] = useState<BotLevel>('hard')
+  const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
+  const [weights, setWeights] = useState<Weights>(defaultWeights)
 
-  const captureStarts = useMemo(() => allCaptureStarts(board, turn), [
-    board,
-    turn,
-  ])
+  useEffect(() => {
+    loadAlphaBetaWeights().then(setWeights)
+  }, [])
+
+  const captureStarts = useMemo(() => allCaptureStarts(board, turn), [board, turn])
 
   const legalMoves = (from: Pos): Pos[] => {
     const piece = board[from.r][from.c]
@@ -209,8 +71,7 @@ export default function Home() {
   }
 
   const tapCell = (r: number, c: number) => {
-    const here = board[r][c]
-
+    if (botEnabled && turn !== humanSide) return
     if (!selected) {
       if (canSelect(r, c)) setSelected({ r, c })
       return
@@ -223,30 +84,8 @@ export default function Home() {
       return
     }
 
-    const next = clone(board)
-    const piece = next[selected.r][selected.c]
-    if (!piece) return
-
-    const captured = capturedBetween(board, selected, { r, c })
+    const { board: next, captured, promoted } = applyMove(board, selected, { r, c })
     const isJump = Boolean(captured)
-
-    next[selected.r][selected.c] = null
-    next[r][c] = piece
-
-    if (captured) {
-      next[captured.r][captured.c] = null
-    }
-
-    let promoted = false
-
-    if (
-      !piece.king &&
-      ((piece.player === 'black' && r === 7) ||
-        (piece.player === 'white' && r === 0))
-    ) {
-      piece.king = true
-      promoted = true
-    }
 
     if (isJump && !promoted && jumpMoves(next, { r, c }).length > 0) {
       setBoard(next)
@@ -256,28 +95,53 @@ export default function Home() {
       return
     }
 
-    const nextTurn: Player = turn === 'black' ? 'white' : 'black'
-    const blackLeft = next.flat().filter((p) => p?.player === 'black').length
-    const whiteLeft = next.flat().filter((p) => p?.player === 'white').length
+    const nextTurn = nextPlayer(turn)
+    const winner = winnerByPieces(next)
 
     setBoard(next)
     setSelected(null)
     setForced(null)
     setTurn(nextTurn)
 
-    if (blackLeft === 0 || whiteLeft === 0) {
-      setMsg(blackLeft === 0 ? 'ขาวชนะ' : 'ดำชนะ')
+    if (winner) {
+      setMsg(winner === 'black' ? 'ดำชนะ' : 'ขาวชนะ')
     } else {
       setMsg(nextTurn === 'black' ? 'ตาดำ' : 'ตาขาว')
     }
   }
 
+  useEffect(() => {
+    if (!botEnabled || turn === humanSide || forced) return
+
+    if (botEngine === 'deep-q') return
+    const timer = setTimeout(() => {
+      const next = chooseAlphaBetaMove(board, turn, botLevel, weights)
+      if (!next) {
+        setMsg(turn === 'black' ? 'ขาวชนะ (ดำเดินไม่ได้)' : 'ดำชนะ (ขาวเดินไม่ได้)')
+        return
+      }
+      const nextTurn = nextPlayer(turn)
+      const winner = winnerByPieces(next)
+      setBoard(next)
+      setTurn(nextTurn)
+      setSelected(null)
+      setForced(null)
+      if (winner) {
+        setMsg(winner === 'black' ? 'ดำชนะ' : 'ขาวชนะ')
+      } else {
+        setMsg(nextTurn === 'black' ? 'ตาดำ' : 'ตาขาว')
+      }
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [board, botEnabled, botEngine, botLevel, forced, humanSide, turn, weights])
+
   const reset = () => {
     setBoard(initBoard())
-    setTurn('black')
+    setTurn(starter)
     setSelected(null)
     setForced(null)
-    setMsg('เริ่มใหม่: ตาดำก่อน')
+    setMsg(starter === 'black' ? 'เริ่มใหม่: ตาดำก่อน (Default)' : 'เริ่มใหม่: ตาขาวก่อน')
   }
 
   return (
@@ -332,9 +196,93 @@ export default function Home() {
           <h1 className="text-xl font-bold">หมากฮอสไทย</h1>
           <p>สถานะ: {msg}</p>
           <p>กติกา: เบี้ยเดินหน้า, บังคับกิน, กินต่อบังคับ, ฮอสเดินยาวและกินยาวตามแนวทแยง</p>
-          <p className="text-cyan-300">
-            แนะนำ: หมุนจอแนวนอนเพื่อเห็นกระดานเต็มขึ้น
+          <p className="rounded-md border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-emerald-200">
+            อัปเดตล่าสุด: <span className="font-semibold">{RELEASE_NOTE}</span>
           </p>
+          <p className="text-xs text-amber-200">
+            หมายเหตุ: ในเว็บนี้ใช้งานได้ทันทีเฉพาะ Alpha-Beta. จากการสำรวจยังไม่พบโมเดล Deep Q-Learning สาธารณะที่พร้อมใช้ตรงกับหมากฮอสไทย
+          </p>
+          <div className="rounded-md border border-slate-600 p-3 text-xs space-y-2">
+            <p className="font-semibold text-slate-200">แหล่งโมเดลสาธารณะที่แนะนำ</p>
+            {PUBLIC_AI_SOURCES.map((src) => (
+              <a
+                key={src.url}
+                href={src.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block underline text-cyan-300"
+              >
+                {src.name} — {src.model}
+              </a>
+            ))}
+          </div>
+
+          <label className="block">
+            เริ่มก่อน
+            <select
+              className="mt-1 w-full rounded bg-slate-700 p-2"
+              value={starter}
+              onChange={(e) => setStarter(e.target.value as Player)}
+            >
+              <option value="black">ดำเดินก่อน (Default)</option>
+              <option value="white">ขาวเดินก่อน</option>
+            </select>
+          </label>
+
+          <label className="block">
+            โหมดเกม
+            <select
+              className="mt-1 w-full rounded bg-slate-700 p-2"
+              value={botEnabled ? 'bot' : 'human'}
+              onChange={(e) => setBotEnabled(e.target.value === 'bot')}
+            >
+              <option value="bot">เล่นกับบอท AI</option>
+              <option value="human">คน vs คน</option>
+            </select>
+          </label>
+
+          {botEnabled && (
+            <>
+              <label className="block">
+                ฝั่งผู้เล่น
+                <select
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  value={humanSide}
+                  onChange={(e) => setHumanSide(e.target.value as Player)}
+                >
+                  <option value="black">เดินก่อน (ดำ)</option>
+                  <option value="white">เดินหลัง (ขาว)</option>
+                </select>
+              </label>
+
+              <label className="block">
+                เอนจินบอท
+                <select
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  value={botEngine}
+                  onChange={(e) => setBotEngine(e.target.value as BotEngine)}
+                >
+                  <option value="alpha-beta">Alpha-Beta Pruning (พร้อมใช้)</option>
+                  <option value="deep-q">Deep Q-Learning (ยังไม่พบแหล่งพร้อมใช้)</option>
+                </select>
+              </label>
+
+              <label className="block">
+                ระดับ AI
+                <select
+                  className="mt-1 w-full rounded bg-slate-700 p-2"
+                  value={botLevel}
+                  onChange={(e) => setBotLevel(e.target.value as BotLevel)}
+                >
+                  <option value="easy">ง่าย</option>
+                  <option value="normal">ปกติ</option>
+                  <option value="hard">ยาก</option>
+                </select>
+              </label>
+            </>
+          )}
+
+          <p className="text-cyan-300">แนะนำ: หมุนจอแนวนอนเพื่อเห็นกระดานเต็มขึ้น</p>
 
           <button
             onClick={reset}
