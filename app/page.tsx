@@ -48,7 +48,7 @@ export default function Home() {
   const [customBotDepthInput, setCustomBotDepthInput] = useState('5')
   const [botEngine, setBotEngine] = useState<BotEngine>('alpha-beta')
   const [weights, setWeights] = useState<Weights>(defaultWeights)
-  const [analysisEnabled, setAnalysisEnabled] = useState(true)
+  const [analysisEnabled, setAnalysisEnabled] = useState(false)
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('best1')
   const [analysisRequestedDepthInput, setAnalysisRequestedDepthInput] = useState('6')
   const [analysisRuntimeDepth, setAnalysisRuntimeDepth] = useState(1)

@@ -1,14 +1,14 @@
 {
-  "bias": 0,
-  "manDiff": 1.1,
-  "kingDiff": 2.6,
-  "mobilityDiff": 0.18,
-  "captureThreatDiff": 0.95,
-  "longestCaptureDiff": 1.25,
-  "recaptureRisk": -1.1,
-  "kingLineControlDiff": 0.28,
-  "centerControlDiff": 0.22,
-  "edgePenaltyDiff": -0.18,
-  "advancementDiff": 0.16,
-  "opponentMobilityPressure": 0.35
+  "bias": 8,
+  "manDiff": 7.99955,
+  "kingDiff": 7.7755,
+  "mobilityDiff": 4.64509,
+  "captureThreatDiff": 0.93626,
+  "longestCaptureDiff": 1.95492,
+  "recaptureRisk": 0.04781,
+  "kingLineControlDiff": -2.81742,
+  "centerControlDiff": 0.78975,
+  "edgePenaltyDiff": 4.94746,
+  "advancementDiff": 4.56036,
+  "opponentMobilityPressure": 3.70715
 }
