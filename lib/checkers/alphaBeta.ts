@@ -12,6 +12,7 @@ import type { Board, Player, Pos, Weights } from './types'
 
 type TurnOption = {
   board: Board
+  path: Pos[]
   captures: number
   capturedKings: number
   promotions: number
@@ -19,6 +20,23 @@ type TurnOption = {
 
 const WIN_SCORE = 10_000
 const QUIESCENCE_DEPTH = 8
+const WHITE_OPENING_ANCHOR_SQUARE = 28
+const WHITE_ANCHOR_ORDER_PENALTY = 25_000
+const WHITE_ANCHOR_CLEAR_ADVANTAGE_MARGIN = 350
+
+function playableSquareNumber(pos: Pos): number | null {
+  if ((pos.r + pos.c) % 2 !== 1) return null
+  return pos.r * 4 + Math.floor(pos.c / 2) + 1
+}
+
+function startsFromSquare(option: TurnOption, square: number): boolean {
+  const [from] = option.path
+  return Boolean(from && playableSquareNumber(from) === square)
+}
+
+function shouldProtectWhiteAnchor(option: TurnOption, root: Player): boolean {
+  return root === 'white' && startsFromSquare(option, WHITE_OPENING_ANCHOR_SQUARE) && option.captures === 0
+}
 
 function boardKey(board: Board, side: Player, root: Player, depth: number, qDepth: number): string {
   const cells = board
@@ -32,11 +50,14 @@ function boardKey(board: Board, side: Player, root: Player, depth: number, qDept
 }
 
 function orderScore(option: TurnOption, root: Player, weights: Weights): number {
+  const anchorPenalty = shouldProtectWhiteAnchor(option, root) ? WHITE_ANCHOR_ORDER_PENALTY : 0
+
   return (
     option.captures * 100 +
     option.capturedKings * 220 +
     option.promotions * 80 +
-    evaluateBoard(option.board, root, weights)
+    evaluateBoard(option.board, root, weights) -
+    anchorPenalty
   )
 }
 
@@ -46,17 +67,19 @@ function buildTurnOptions(board: Board, turn: Player, root: Player, weights: Wei
   const followJumps = (
     b: Board,
     at: Pos,
+    path: Pos[],
     captures: number,
     capturedKings: number,
     promotions: number,
   ): TurnOption[] => {
     const nextJumps = jumpMoves(b, at)
-    if (nextJumps.length === 0) return [{ board: b, captures, capturedKings, promotions }]
+    if (nextJumps.length === 0) return [{ board: b, path, captures, capturedKings, promotions }]
 
     const out: TurnOption[] = []
     for (const target of nextJumps) {
       const moved = applyMove(b, at, target)
       const capturedPiece = moved.captured ? b[moved.captured.r]?.[moved.captured.c] : null
+      const nextPath = [...path, target]
       const nextCaptures = captures + (moved.captured ? 1 : 0)
       const nextCapturedKings = capturedKings + (capturedPiece?.king ? 1 : 0)
       const nextPromotions = promotions + (moved.promoted ? 1 : 0)
@@ -64,12 +87,13 @@ function buildTurnOptions(board: Board, turn: Player, root: Player, weights: Wei
       if (moved.promoted) {
         out.push({
           board: moved.board,
+          path: nextPath,
           captures: nextCaptures,
           capturedKings: nextCapturedKings,
           promotions: nextPromotions,
         })
       } else {
-        out.push(...followJumps(moved.board, target, nextCaptures, nextCapturedKings, nextPromotions))
+        out.push(...followJumps(moved.board, target, nextPath, nextCaptures, nextCapturedKings, nextPromotions))
       }
     }
     return out
@@ -78,16 +102,18 @@ function buildTurnOptions(board: Board, turn: Player, root: Player, weights: Wei
   let options: TurnOption[] = []
 
   if (starts.length > 0) {
-    options = starts.flatMap((start) => followJumps(cloneBoard(board), start, 0, 0, 0))
+    options = starts.flatMap((start) => followJumps(cloneBoard(board), start, [start], 0, 0, 0))
   } else {
     for (let r = 0; r < board.length; r++) {
       for (let c = 0; c < board[r].length; c++) {
+        const from = { r, c }
         const piece = board[r][c]
         if (!piece || piece.player !== turn) continue
-        for (const target of stepMoves(board, { r, c })) {
-          const moved = applyMove(board, { r, c }, target)
+        for (const target of stepMoves(board, from)) {
+          const moved = applyMove(board, from, target)
           options.push({
             board: moved.board,
+            path: [from, target],
             captures: 0,
             capturedKings: 0,
             promotions: moved.promoted ? 1 : 0,
@@ -166,10 +192,27 @@ export function bestBoard(board: Board, turn: Player, depth: number, weights: We
   const options = buildTurnOptions(board, turn, turn, weights)
   if (options.length === 0) return null
 
+  const scoredOptions = options.map((option) => ({
+    option,
+    score: search(option.board, searchDepth - 1, nextPlayer(turn), -Infinity, Infinity, QUIESCENCE_DEPTH),
+  }))
+  const bestNonAnchorScore = scoredOptions
+    .filter(({ option }) => !shouldProtectWhiteAnchor(option, turn))
+    .reduce((best, item) => Math.max(best, item.score), -Infinity)
+
   let bestScore = -Infinity
-  let chosen = options[0].board
-  for (const option of options) {
-    const score = search(option.board, searchDepth - 1, nextPlayer(turn), -Infinity, Infinity, QUIESCENCE_DEPTH)
+  let chosen = scoredOptions[0].option.board
+
+  for (const { option, score } of scoredOptions) {
+    const protectedAnchor = shouldProtectWhiteAnchor(option, turn)
+    const canReleaseAnchor =
+      !protectedAnchor ||
+      scoredOptions.length === 1 ||
+      bestNonAnchorScore === -Infinity ||
+      score >= bestNonAnchorScore + WHITE_ANCHOR_CLEAR_ADVANTAGE_MARGIN
+
+    if (!canReleaseAnchor) continue
+
     if (score > bestScore) {
       bestScore = score
       chosen = option.board
