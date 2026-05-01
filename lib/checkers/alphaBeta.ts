@@ -18,24 +18,47 @@ type TurnOption = {
   promotions: number
 }
 
+type GuardedMove = {
+  from: number
+  to: number
+}
+
 const WIN_SCORE = 10_000
 const QUIESCENCE_DEPTH = 8
-const WHITE_OPENING_ANCHOR_SQUARE = 28
-const WHITE_ANCHOR_ORDER_PENALTY = 25_000
-const WHITE_ANCHOR_CLEAR_ADVANTAGE_MARGIN = 350
+const WHITE_GUARDED_ANCHOR_SQUARES = new Set([28, 32])
+const WHITE_GUARDED_QUIET_MOVES: GuardedMove[] = [
+  { from: 32, to: 27 },
+  { from: 31, to: 27 },
+  { from: 29, to: 25 },
+  { from: 26, to: 22 },
+]
+const WHITE_GUARDED_ORDER_PENALTY = 25_000
+const WHITE_GUARDED_CLEAR_ADVANTAGE_MARGIN = 350
+const WHITE_GUARDED_DRAW_FLOOR = -50
+const WHITE_GUARDED_DRAW_MARGIN = 25
 
 function playableSquareNumber(pos: Pos): number | null {
   if ((pos.r + pos.c) % 2 !== 1) return null
   return pos.r * 4 + Math.floor(pos.c / 2) + 1
 }
 
-function startsFromSquare(option: TurnOption, square: number): boolean {
+function startsFromGuardedAnchor(option: TurnOption): boolean {
   const [from] = option.path
-  return Boolean(from && playableSquareNumber(from) === square)
+  const square = from ? playableSquareNumber(from) : null
+  return square !== null && WHITE_GUARDED_ANCHOR_SQUARES.has(square)
 }
 
-function shouldProtectWhiteAnchor(option: TurnOption, root: Player): boolean {
-  return root === 'white' && startsFromSquare(option, WHITE_OPENING_ANCHOR_SQUARE) && option.captures === 0
+function matchesGuardedQuietMove(option: TurnOption): boolean {
+  const [from, to] = option.path
+  if (!from || !to) return false
+  const fromSquare = playableSquareNumber(from)
+  const toSquare = playableSquareNumber(to)
+  return WHITE_GUARDED_QUIET_MOVES.some((move) => move.from === fromSquare && move.to === toSquare)
+}
+
+function shouldGuardWhiteOpeningMove(option: TurnOption, root: Player): boolean {
+  if (root !== 'white' || option.captures > 0) return false
+  return startsFromGuardedAnchor(option) || matchesGuardedQuietMove(option)
 }
 
 function boardKey(board: Board, side: Player, root: Player, depth: number, qDepth: number): string {
@@ -50,14 +73,14 @@ function boardKey(board: Board, side: Player, root: Player, depth: number, qDept
 }
 
 function orderScore(option: TurnOption, root: Player, weights: Weights): number {
-  const anchorPenalty = shouldProtectWhiteAnchor(option, root) ? WHITE_ANCHOR_ORDER_PENALTY : 0
+  const guardedPenalty = shouldGuardWhiteOpeningMove(option, root) ? WHITE_GUARDED_ORDER_PENALTY : 0
 
   return (
     option.captures * 100 +
     option.capturedKings * 220 +
     option.promotions * 80 +
     evaluateBoard(option.board, root, weights) -
-    anchorPenalty
+    guardedPenalty
   )
 }
 
@@ -196,22 +219,23 @@ export function bestBoard(board: Board, turn: Player, depth: number, weights: We
     option,
     score: search(option.board, searchDepth - 1, nextPlayer(turn), -Infinity, Infinity, QUIESCENCE_DEPTH),
   }))
-  const bestNonAnchorScore = scoredOptions
-    .filter(({ option }) => !shouldProtectWhiteAnchor(option, turn))
+  const bestUnguardedScore = scoredOptions
+    .filter(({ option }) => !shouldGuardWhiteOpeningMove(option, turn))
     .reduce((best, item) => Math.max(best, item.score), -Infinity)
 
   let bestScore = -Infinity
   let chosen = scoredOptions[0].option.board
 
   for (const { option, score } of scoredOptions) {
-    const protectedAnchor = shouldProtectWhiteAnchor(option, turn)
-    const canReleaseAnchor =
-      !protectedAnchor ||
+    const guardedMove = shouldGuardWhiteOpeningMove(option, turn)
+    const canReleaseGuardedMove =
+      !guardedMove ||
       scoredOptions.length === 1 ||
-      bestNonAnchorScore === -Infinity ||
-      score >= bestNonAnchorScore + WHITE_ANCHOR_CLEAR_ADVANTAGE_MARGIN
+      bestUnguardedScore === -Infinity ||
+      score >= bestUnguardedScore + WHITE_GUARDED_CLEAR_ADVANTAGE_MARGIN ||
+      (score >= WHITE_GUARDED_DRAW_FLOOR && score >= bestUnguardedScore - WHITE_GUARDED_DRAW_MARGIN)
 
-    if (!canReleaseAnchor) continue
+    if (!canReleaseGuardedMove) continue
 
     if (score > bestScore) {
       bestScore = score
