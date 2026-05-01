@@ -26,6 +26,7 @@ type GuardedMove = {
 const WIN_SCORE = 10_000
 const QUIESCENCE_DEPTH = 8
 const WHITE_GUARDED_ANCHOR_SQUARES = new Set([28, 32])
+const WHITE_BACKLINE_HOME_SQUARES = new Set([28, 29, 30, 31, 32])
 const WHITE_GUARDED_QUIET_MOVES: GuardedMove[] = [
   { from: 32, to: 27 },
   { from: 31, to: 27 },
@@ -33,7 +34,9 @@ const WHITE_GUARDED_QUIET_MOVES: GuardedMove[] = [
   { from: 26, to: 22 },
 ]
 const WHITE_GUARDED_ORDER_PENALTY = 25_000
+const WHITE_EARLY_31_TO_27_ORDER_PENALTY = 60_000
 const WHITE_GUARDED_CLEAR_ADVANTAGE_MARGIN = 350
+const WHITE_EARLY_31_TO_27_CLEAR_ADVANTAGE_MARGIN = 900
 const WHITE_GUARDED_DRAW_FLOOR = -50
 const WHITE_GUARDED_DRAW_MARGIN = 25
 
@@ -42,10 +45,34 @@ function playableSquareNumber(pos: Pos): number | null {
   return pos.r * 4 + Math.floor(pos.c / 2) + 1
 }
 
+function squareAt(board: Board, square: number): Pos {
+  const index = square - 1
+  const r = Math.floor(index / 4)
+  const darkIndex = index % 4
+  const c = r % 2 === 0 ? darkIndex * 2 + 1 : darkIndex * 2
+  return { r, c }
+}
+
+function whiteBacklineHomeCount(board: Board): number {
+  let count = 0
+  for (const square of WHITE_BACKLINE_HOME_SQUARES) {
+    const pos = squareAt(board, square)
+    const piece = board[pos.r]?.[pos.c]
+    if (piece?.player === 'white' && !piece.king) count += 1
+  }
+  return count
+}
+
 function startsFromGuardedAnchor(option: TurnOption): boolean {
   const [from] = option.path
   const square = from ? playableSquareNumber(from) : null
   return square !== null && WHITE_GUARDED_ANCHOR_SQUARES.has(square)
+}
+
+function matchesMove(option: TurnOption, fromSquare: number, toSquare: number): boolean {
+  const [from, to] = option.path
+  if (!from || !to) return false
+  return playableSquareNumber(from) === fromSquare && playableSquareNumber(to) === toSquare
 }
 
 function matchesGuardedQuietMove(option: TurnOption): boolean {
@@ -54,6 +81,10 @@ function matchesGuardedQuietMove(option: TurnOption): boolean {
   const fromSquare = playableSquareNumber(from)
   const toSquare = playableSquareNumber(to)
   return WHITE_GUARDED_QUIET_MOVES.some((move) => move.from === fromSquare && move.to === toSquare)
+}
+
+function isEarlyWhite31To27(option: TurnOption, board: Board, root: Player): boolean {
+  return root === 'white' && option.captures === 0 && matchesMove(option, 31, 27) && whiteBacklineHomeCount(board) >= 4
 }
 
 function shouldGuardWhiteOpeningMove(option: TurnOption, root: Player): boolean {
@@ -74,13 +105,15 @@ function boardKey(board: Board, side: Player, root: Player, depth: number, qDept
 
 function orderScore(option: TurnOption, root: Player, weights: Weights): number {
   const guardedPenalty = shouldGuardWhiteOpeningMove(option, root) ? WHITE_GUARDED_ORDER_PENALTY : 0
+  const early31Penalty = matchesMove(option, 31, 27) && root === 'white' ? WHITE_EARLY_31_TO_27_ORDER_PENALTY : 0
 
   return (
     option.captures * 100 +
     option.capturedKings * 220 +
     option.promotions * 80 +
     evaluateBoard(option.board, root, weights) -
-    guardedPenalty
+    guardedPenalty -
+    early31Penalty
   )
 }
 
@@ -227,15 +260,21 @@ export function bestBoard(board: Board, turn: Player, depth: number, weights: We
   let chosen = scoredOptions[0].option.board
 
   for (const { option, score } of scoredOptions) {
+    const early31To27 = isEarlyWhite31To27(option, board, turn)
     const guardedMove = shouldGuardWhiteOpeningMove(option, turn)
+    const canReleaseEarly31To27 =
+      !early31To27 ||
+      scoredOptions.length === 1 ||
+      bestUnguardedScore === -Infinity ||
+      score >= bestUnguardedScore + WHITE_EARLY_31_TO_27_CLEAR_ADVANTAGE_MARGIN
     const canReleaseGuardedMove =
       !guardedMove ||
       scoredOptions.length === 1 ||
       bestUnguardedScore === -Infinity ||
       score >= bestUnguardedScore + WHITE_GUARDED_CLEAR_ADVANTAGE_MARGIN ||
-      (score >= WHITE_GUARDED_DRAW_FLOOR && score >= bestUnguardedScore - WHITE_GUARDED_DRAW_MARGIN)
+      (!early31To27 && score >= WHITE_GUARDED_DRAW_FLOOR && score >= bestUnguardedScore - WHITE_GUARDED_DRAW_MARGIN)
 
-    if (!canReleaseGuardedMove) continue
+    if (!canReleaseEarly31To27 || !canReleaseGuardedMove) continue
 
     if (score > bestScore) {
       bestScore = score
