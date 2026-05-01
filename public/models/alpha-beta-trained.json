@@ -1,7 +1,7 @@
 {
-  "man": 5.8981,
-  "king": 8.935,
-  "mobility": 0.0125,
-  "captureBonus": 0.0219,
-  "kingAdvance": 0.0022
+  "man": 7.5234,
+  "king": 10.5581,
+  "mobility": 0.0115,
+  "captureBonus": 0.0242,
+  "kingAdvance": 0.001
 }
