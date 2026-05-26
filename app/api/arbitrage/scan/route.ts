@@ -198,12 +198,18 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
   }
 }
 
+async function getHistory(symbol: string, fromSec: number, nowSec: number, logs: string[]) {
+  const url = `https://api.bitkub.com/tradingview/history?symbol=${encodeURIComponent(symbol)}&resolution=1D&from=${fromSec}&to=${nowSec}`
+  const data = await j<TradingViewHistory>(url, 1200, logs)
+  if (data?.s === 'ok' && (data.v?.length ?? 0) > 0) return data
+  return null
+}
+
 async function fetchWeighted30dayVolume(row: TopMarketRow, logs: string[]) {
   const nowSec = Math.floor(Date.now() / 1000)
   const fromSec = nowSec - 35 * 24 * 60 * 60
-  const symbol = `THB_${toBk(row.symbol)}`
-  const url = `https://api.bitkub.com/tradingview/history?symbol=${encodeURIComponent(symbol)}&resolution=1D&from=${fromSec}&to=${nowSec}`
-  const data = await j<TradingViewHistory>(url, 1200, logs)
+  const bkSymbol = toBk(row.symbol)
+  const data = await getHistory(`${bkSymbol}_THB`, fromSec, nowSec, logs) ?? await getHistory(`THB_${bkSymbol}`, fromSec, nowSec, logs)
   const closes = data?.c ?? []
   const volumes = data?.v ?? []
   const dailyThbVolumes: number[] = []
