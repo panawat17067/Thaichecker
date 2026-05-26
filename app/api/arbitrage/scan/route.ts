@@ -39,8 +39,12 @@ type TopMarketRow = {
   bkBid: number
   percentChange: number
   quoteVolume: number
-  baseVolume: number
+  avg30dayVolume: number | null
+  median30dayVolume: number | null
+  mean30dayVolume: number | null
+  historyDays: number
 }
+type TradingViewHistory = { s?: string; c?: unknown[]; v?: unknown[] }
 
 const BITKUB_FEE = 0.0025
 const BINANCE_FEE = 0.001
@@ -51,6 +55,8 @@ const DEFAULT_MIN_BK_VOL = 2000
 const DEFAULT_EXT_VOL = 3000
 const DEFAULT_GAP_BK_TO_EXT = 1.3
 const DEFAULT_GAP_EXT_TO_BK = 1.5
+const TOP_MARKET_LIMIT = 50
+const AVG30D_ENRICH_LIMIT = 40
 const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR', 'OMNI'])
 const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'PERP', 'L3', 'ABT'])
 const COINBASE_PRODUCT_IDS: Record<string, string> = { IOTX: 'IOTX-USD', PERP: 'PERP-USD', L3: 'L3-USD', ABT: 'ABT-USD' }
@@ -76,6 +82,12 @@ function firstFinite(...values: unknown[]) { for (const v of values) { const x =
 function clamp(raw: string | null, fallback: number, min: number, max: number) { const x = Number(raw); return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback }
 function gap(sell: number, buy: number) { return ((sell - buy) / buy) * 100 }
 function coinbaseProductId(symbol: string) { const s = clean(symbol); return COINBASE_PRODUCT_IDS[s] ?? `${s}-USD` }
+function median(values: number[]) {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
 
 async function j<T>(url: string, timeoutMs: number, logs: string[]): Promise<T | null> {
   const controller = new AbortController()
@@ -159,18 +171,75 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
     const bkBid = firstNum(bk.highestBid, bk.highest_bid, bk.bid)
     const percentChange = firstFinite(bk.percentChange, bk.percent_change, bk.changePercent, bk.change_percent)
     const quoteVolume = firstNum(bk.quoteVolume, bk.quote_volume, bk.volumeQuote, bk.volume_quote)
-    const baseVolume = firstNum(bk.baseVolume, bk.base_volume, bk.volumeBase, bk.volume_base)
     if (!last || !bkAsk || !bkBid || percentChange === null || !quoteVolume) continue
 
-    rows.push({ symbol, bkSymbol, name: info.name || symbol, marketSource: info.source, last, bkAsk, bkBid, percentChange, quoteVolume, baseVolume: baseVolume ?? 0 })
+    rows.push({
+      symbol,
+      bkSymbol,
+      name: info.name || symbol,
+      marketSource: info.source,
+      last,
+      bkAsk,
+      bkBid,
+      percentChange,
+      quoteVolume,
+      avg30dayVolume: null,
+      median30dayVolume: null,
+      mean30dayVolume: null,
+      historyDays: 0,
+    })
   }
 
   return {
-    topGainers: [...rows].sort((a, b) => b.percentChange - a.percentChange),
-    topVolumes: [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume),
+    topGainers: [...rows].sort((a, b) => b.percentChange - a.percentChange).slice(0, TOP_MARKET_LIMIT),
+    topVolumes: [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, TOP_MARKET_LIMIT),
     brokerExcluded,
     unknownExcluded,
   }
+}
+
+async function fetchWeighted30dayVolume(row: TopMarketRow, logs: string[]) {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const fromSec = nowSec - 35 * 24 * 60 * 60
+  const symbol = `THB_${toBk(row.symbol)}`
+  const url = `https://api.bitkub.com/tradingview/history?symbol=${encodeURIComponent(symbol)}&resolution=1D&from=${fromSec}&to=${nowSec}`
+  const data = await j<TradingViewHistory>(url, 1200, logs)
+  const closes = data?.c ?? []
+  const volumes = data?.v ?? []
+  const dailyThbVolumes: number[] = []
+
+  for (let i = Math.max(0, volumes.length - 30); i < volumes.length; i += 1) {
+    const close = n(closes[i])
+    const volume = n(volumes[i])
+    if (!close || !volume) continue
+    dailyThbVolumes.push(close * volume)
+  }
+
+  const medianVol = median(dailyThbVolumes)
+  if (!medianVol || dailyThbVolumes.length === 0) return null
+  const meanVol = dailyThbVolumes.reduce((sum, value) => sum + value, 0) / dailyThbVolumes.length
+  return {
+    avg30dayVolume: medianVol * 0.7 + meanVol * 0.3,
+    median30dayVolume: medianVol,
+    mean30dayVolume: meanVol,
+    historyDays: dailyThbVolumes.length,
+  }
+}
+
+async function enrichTopRowsWith30dayVolume(topGainers: TopMarketRow[], topVolumes: TopMarketRow[], logs: string[]) {
+  const unique = new Map<string, TopMarketRow>()
+  for (const row of [...topGainers.slice(0, AVG30D_ENRICH_LIMIT), ...topVolumes.slice(0, AVG30D_ENRICH_LIMIT)]) unique.set(row.symbol, row)
+  let enriched = 0
+  await mapLimit([...unique.values()], 14, async row => {
+    const stat = await fetchWeighted30dayVolume(row, logs)
+    if (!stat) return
+    row.avg30dayVolume = stat.avg30dayVolume
+    row.median30dayVolume = stat.median30dayVolume
+    row.mean30dayVolume = stat.mean30dayVolume
+    row.historyDays = stat.historyDays
+    enriched += 1
+  })
+  logs.push(`30D weighted volume enriched: ${enriched}/${unique.size} rows (median 70%, mean 30%)`)
 }
 
 function calcVwap(levels: [unknown, unknown][], usdtThb: number, targetThb: number) {
@@ -308,6 +377,7 @@ export async function GET(request: NextRequest) {
   const { topGainers, topVolumes, brokerExcluded, unknownExcluded } = buildTop24hLists(bkTicker, symbolInfo)
   if (!bkSymbolData || bkSymbolData.error !== 0) logs.push('Bitkub symbols unavailable: 24H modes require source=exchange and may be empty')
   logs.push(`24H exchange-only lists: gainers=${topGainers.length}, volumes=${topVolumes.length}, broker excluded=${brokerExcluded}, unknown excluded=${unknownExcluded}`)
+  await enrichTopRowsWith30dayVolume(topGainers, topVolumes, logs)
 
   const bitkubSymbols = Object.keys(bkTicker)
     .filter(market => market.startsWith('THB_') && market !== 'THB_USDT')
