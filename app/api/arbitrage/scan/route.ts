@@ -38,6 +38,14 @@ const DEFAULT_EXT_VOL = 3000
 const DEFAULT_GAP_BK_TO_EXT = 1.3
 const DEFAULT_GAP_EXT_TO_BK = 1.5
 const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR'])
+const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'OMNI', 'PERP', 'L3', 'ABT'])
+const COINBASE_PRODUCT_IDS: Record<string, string> = {
+  IOTX: 'IOTX-USD',
+  OMNI: 'OMNI-USD',
+  PERP: 'PERP-USD',
+  L3: 'L3-USD',
+  ABT: 'ABT-USD',
+}
 const SPECIAL_GAPS: Record<string, number> = {
   ZIL: 1.0, DOGE: 1.0, ETH: 1.0, ALPHA: 1.5, LUNC: 1.3, SQD: 2, MNT: 0.7, ZENT: 2.2,
   SNX: 2.0, AXS: 2.0, OMNI: 3.0, SPEC: 5.0, LYX: 3.0, ADA: 2.1, XMN: 3.3,
@@ -57,6 +65,7 @@ function n(v: unknown) { const x = Number(v); return Number.isFinite(x) && x > 0
 function firstNum(...values: unknown[]) { for (const v of values) { const x = n(v); if (x) return x } return null }
 function clamp(raw: string | null, fallback: number, min: number, max: number) { const x = Number(raw); return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback }
 function gap(sell: number, buy: number) { return ((sell - buy) / buy) * 100 }
+function coinbaseProductId(symbol: string) { const s = clean(symbol); return COINBASE_PRODUCT_IDS[s] ?? `${s}-USD` }
 
 async function j<T>(url: string, timeoutMs: number, logs: string[]): Promise<T | null> {
   const controller = new AbortController()
@@ -151,7 +160,7 @@ async function gateVwap(symbol: string, side: Side, usdtThb: number, target: num
 }
 
 async function coinbaseVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) {
-  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.exchange.coinbase.com/products/${clean(symbol)}-USD/book?level=2`, 2500, logs)
+  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/book?level=2`, 2500, logs)
   return calcVwap(data?.[side] ?? [], usdtThb, target)
 }
 
@@ -164,63 +173,62 @@ async function sourceVwap(symbol: string, source: Source, side: Side, usdtThb: n
 
 function setByPriority(out: Map<string, ExtBook>, wanted: Set<string>, symbol: string, ask: unknown, bid: unknown, source: Source, fee: number) {
   const cleanSymbol = clean(symbol)
-  if (!wanted.has(cleanSymbol) || out.has(cleanSymbol)) return
+  if (!wanted.has(cleanSymbol) || out.has(cleanSymbol) || FORCE_COINBASE_SYMBOLS.has(cleanSymbol)) return
   const askNum = n(ask), bidNum = n(bid)
   if (askNum && bidNum) out.set(cleanSymbol, { ask: askNum, bid: bidNum, source, fee })
+}
+
+function setCoinbaseForced(out: Map<string, ExtBook>, wanted: Set<string>, symbol: string, ask: unknown, bid: unknown) {
+  const cleanSymbol = clean(symbol)
+  if (!wanted.has(cleanSymbol) || !FORCE_COINBASE_SYMBOLS.has(cleanSymbol)) return
+  const askNum = n(ask), bidNum = n(bid)
+  if (askNum && bidNum) out.set(cleanSymbol, { ask: askNum, bid: bidNum, source: 'Coinbase', fee: COINBASE_FEE })
 }
 
 async function externalBooks(bitkubSymbols: string[], logs: string[]) {
   const wanted = new Set(bitkubSymbols.map(clean).filter(Boolean))
   const out = new Map<string, ExtBook>()
 
-  const [binance, mexc, gate] = await Promise.all([
+  const forcedCoinbase = [...wanted].filter(symbol => FORCE_COINBASE_SYMBOLS.has(symbol))
+  const [binance, mexc, gate, coinbaseTickers] = await Promise.all([
     j<Array<{ symbol?: string; askPrice?: string; bidPrice?: string }>>('https://api.binance.com/api/v3/ticker/bookTicker', 3500, logs),
     j<Array<{ symbol?: string; askPrice?: string; bidPrice?: string }>>('https://api.mexc.com/api/v3/ticker/bookTicker', 3500, logs),
     j<Array<{ currency_pair?: string; highest_bid?: string; lowest_ask?: string }>>('https://api.gateio.ws/api/v4/spot/tickers', 3500, logs),
+    Promise.all(forcedCoinbase.map(async symbol => ({
+      symbol,
+      data: await j<{ ask?: string; bid?: string; price?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/ticker`, 2500, logs),
+    }))),
   ])
 
-  // 1) Binance first. ถ้า Binance มีคู่ USDT ให้ใช้ราคาจาก Binance ก่อนเสมอ
+  // 1) Binance first. เหรียญ FORCE_COINBASE_SYMBOLS จะถูกข้าม และไป Coinbase เท่านั้น
   for (const row of binance ?? []) {
     const raw = row.symbol ?? ''
     if (!raw.endsWith('USDT')) continue
     setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'Binance', BINANCE_FEE)
   }
 
-  // 2) MEXC fallback เฉพาะเหรียญที่ Binance ไม่มี
+  // 2) MEXC fallback เฉพาะเหรียญที่ Binance ไม่มี และไม่ใช่เหรียญบังคับ Coinbase
   for (const row of mexc ?? []) {
     const raw = row.symbol ?? ''
     if (!raw.endsWith('USDT')) continue
     setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'MEXC', MEXC_FEE)
   }
 
-  // 3) Gate.io fallback เฉพาะเหรียญที่ Binance/MEXC ไม่มี
+  // 3) Gate.io fallback เฉพาะเหรียญที่ Binance/MEXC ไม่มี และไม่ใช่เหรียญบังคับ Coinbase
   for (const row of gate ?? []) {
     const pair = row.currency_pair ?? ''
     if (!pair.endsWith('_USDT')) continue
     setByPriority(out, wanted, pair.split('_')[0], row.lowest_ask, row.highest_bid, 'Gate.io', GATE_FEE)
   }
 
-  // 4) Coinbase fallback สุดท้ายเท่านั้น เช่นเหรียญที่ไม่มีใน Binance/MEXC/Gate
-  const missing = [...wanted].filter(symbol => !out.has(symbol))
-  if (missing.length > 0) {
-    const products = await j<Array<{ id?: string; base_currency?: string; quote_currency?: string }>>('https://api.exchange.coinbase.com/products', 3500, logs)
-    const productIds = new Map<string, string>()
-    const missingSet = new Set(missing)
-    for (const product of products ?? []) {
-      const base = clean(product.base_currency)
-      const quote = clean(product.quote_currency)
-      const id = String(product.id ?? '').toUpperCase()
-      if (base && quote === 'USD' && id && missingSet.has(base)) productIds.set(base, id)
-    }
-    await mapLimit([...productIds.entries()], 8, async ([symbol, productId]) => {
-      const ticker = await j<{ ask?: string; bid?: string; price?: string }>(`https://api.exchange.coinbase.com/products/${encodeURIComponent(productId)}/ticker`, 2500, logs)
-      const ask = firstNum(ticker?.ask, ticker?.price)
-      const bid = firstNum(ticker?.bid, ticker?.price)
-      setByPriority(out, wanted, symbol, ask, bid, 'Coinbase', COINBASE_FEE)
-    })
+  // 4) Coinbase ใช้เฉพาะ IOTX, OMNI, PERP, L3, ABT เท่านั้น และบังคับ override เป็น Coinbase
+  for (const row of coinbaseTickers) {
+    const ask = firstNum(row.data?.ask, row.data?.price)
+    const bid = firstNum(row.data?.bid, row.data?.price)
+    setCoinbaseForced(out, wanted, row.symbol, ask, bid)
   }
 
-  logs.push(`Bitkub symbols checked: ${wanted.size}, external matched: ${out.size}`)
+  logs.push(`Bitkub symbols checked: ${wanted.size}, external matched: ${out.size}, forced Coinbase: ${forcedCoinbase.join(',') || '-'}`)
   return out
 }
 
