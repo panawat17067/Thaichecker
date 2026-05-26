@@ -7,6 +7,7 @@ export const maxDuration = 10
 
 type Side = 'asks' | 'bids'
 type Source = 'Binance' | 'MEXC' | 'Gate.io' | 'Coinbase'
+type MarketSource = 'exchange' | 'broker' | string
 type ExtBook = { ask: number; bid: number; source: Source; fee: number }
 type Verified = { pct: number; buy: number; sell: number; bitkubVolumeThb: number; externalVwapVolumeThb: number }
 type Row = {
@@ -27,6 +28,19 @@ type Row = {
   verifiedBkToExt?: Verified
   verifiedExtToBk?: Verified
 }
+type BitkubSymbolInfo = { base_asset?: string; name?: string; source?: MarketSource; symbol?: string }
+type TopMarketRow = {
+  symbol: string
+  bkSymbol: string
+  name: string
+  marketSource: MarketSource
+  last: number
+  bkAsk: number
+  bkBid: number
+  percentChange: number
+  quoteVolume: number
+  baseVolume: number
+}
 
 const BITKUB_FEE = 0.0025
 const BINANCE_FEE = 0.001
@@ -39,12 +53,7 @@ const DEFAULT_GAP_BK_TO_EXT = 1.3
 const DEFAULT_GAP_EXT_TO_BK = 1.5
 const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR', 'OMNI'])
 const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'PERP', 'L3', 'ABT'])
-const COINBASE_PRODUCT_IDS: Record<string, string> = {
-  IOTX: 'IOTX-USD',
-  PERP: 'PERP-USD',
-  L3: 'L3-USD',
-  ABT: 'ABT-USD',
-}
+const COINBASE_PRODUCT_IDS: Record<string, string> = { IOTX: 'IOTX-USD', PERP: 'PERP-USD', L3: 'L3-USD', ABT: 'ABT-USD' }
 const SPECIAL_GAPS: Record<string, number> = {
   ZIL: 1.0, DOGE: 1.0, ETH: 1.0, ALPHA: 1.5, LUNC: 1.3, SQD: 2, MNT: 0.7, ZENT: 2.2,
   SNX: 2.0, AXS: 2.0, SPEC: 5.0, LYX: 3.0, ADA: 2.1, XMN: 3.3,
@@ -61,7 +70,9 @@ function clean(v: unknown) { return String(v ?? '').toUpperCase().replace(/[^A-Z
 function toBk(s: string) { return STD_TO_BK[s] ?? s }
 function toStd(s: string) { return BK_TO_STD[s] ?? s }
 function n(v: unknown) { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null }
+function num(v: unknown) { const x = Number(v); return Number.isFinite(x) ? x : null }
 function firstNum(...values: unknown[]) { for (const v of values) { const x = n(v); if (x) return x } return null }
+function firstFinite(...values: unknown[]) { for (const v of values) { const x = num(v); if (x !== null) return x } return null }
 function clamp(raw: string | null, fallback: number, min: number, max: number) { const x = Number(raw); return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback }
 function gap(sell: number, buy: number) { return ((sell - buy) / buy) * 100 }
 function coinbaseProductId(symbol: string) { const s = clean(symbol); return COINBASE_PRODUCT_IDS[s] ?? `${s}-USD` }
@@ -107,6 +118,58 @@ function parseGaps(raw: string | null, logs: string[]) {
   } catch (err) {
     logs.push(`specialGaps parse failed: ${err instanceof Error ? err.message : String(err)}`)
     return SPECIAL_GAPS
+  }
+}
+
+function buildSymbolInfoMap(data: { error?: number; result?: BitkubSymbolInfo[] } | null) {
+  const map = new Map<string, { name: string; source: MarketSource }>()
+  for (const item of data?.result ?? []) {
+    const source = item.source ?? 'unknown'
+    const name = String(item.name ?? '')
+    const keys = new Set<string>()
+    const base = clean(item.base_asset)
+    if (base) keys.add(toStd(base))
+    const symbol = String(item.symbol ?? '').toUpperCase()
+    for (const part of symbol.split('_')) {
+      const key = toStd(clean(part))
+      if (key && key !== 'THB') keys.add(key)
+    }
+    for (const key of keys) map.set(key, { name, source })
+  }
+  return map
+}
+
+function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, symbolInfo: Map<string, { name: string; source: MarketSource }>) {
+  const rows: TopMarketRow[] = []
+  let brokerExcluded = 0
+  let unknownExcluded = 0
+
+  for (const [market, bk] of Object.entries(bkTicker)) {
+    if (!market.startsWith('THB_') || market === 'THB_USDT') continue
+    const bkSymbol = clean(market.split('_')[1])
+    const symbol = toStd(bkSymbol)
+    if (!symbol || DO_NOT_CHECK.has(symbol)) continue
+
+    const info = symbolInfo.get(symbol)
+    if (info?.source === 'broker') { brokerExcluded += 1; continue }
+    if (info?.source !== 'exchange') { unknownExcluded += 1; continue }
+
+    const last = firstNum(bk.last, bk.lastPrice, bk.last_price)
+    const bkAsk = firstNum(bk.lowestAsk, bk.lowest_ask, bk.ask)
+    const bkBid = firstNum(bk.highestBid, bk.highest_bid, bk.bid)
+    const percentChange = firstFinite(bk.percentChange, bk.percent_change, bk.changePercent, bk.change_percent)
+    const quoteVolume = firstNum(bk.quoteVolume, bk.quote_volume, bk.volumeQuote, bk.volume_quote)
+    const baseVolume = firstNum(bk.baseVolume, bk.base_volume, bk.volumeBase, bk.volume_base)
+    if (!last || !bkAsk || !bkBid || percentChange === null || !quoteVolume) continue
+
+    rows.push({ symbol, bkSymbol, name: info.name || symbol, marketSource: info.source, last, bkAsk, bkBid, percentChange, quoteVolume, baseVolume: baseVolume ?? 0 })
+  }
+
+  return {
+    topGainers: [...rows].sort((a, b) => b.percentChange - a.percentChange),
+    topVolumes: [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume),
+    brokerExcluded,
+    unknownExcluded,
   }
 }
 
@@ -193,34 +256,24 @@ async function externalBooks(bitkubSymbols: string[], logs: string[]) {
     j<Array<{ symbol?: string; askPrice?: string; bidPrice?: string }>>('https://api.binance.com/api/v3/ticker/bookTicker', 3500, logs),
     j<Array<{ symbol?: string; askPrice?: string; bidPrice?: string }>>('https://api.mexc.com/api/v3/ticker/bookTicker', 3500, logs),
     j<Array<{ currency_pair?: string; highest_bid?: string; lowest_ask?: string }>>('https://api.gateio.ws/api/v4/spot/tickers', 3500, logs),
-    Promise.all(forcedCoinbase.map(async symbol => ({
-      symbol,
-      data: await j<{ ask?: string; bid?: string; price?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/ticker`, 2500, logs),
-    }))),
+    Promise.all(forcedCoinbase.map(async symbol => ({ symbol, data: await j<{ ask?: string; bid?: string; price?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/ticker`, 2500, logs) }))),
   ])
 
-  // 1) Binance first. เหรียญ FORCE_COINBASE_SYMBOLS จะถูกข้าม และไป Coinbase เท่านั้น
   for (const row of binance ?? []) {
     const raw = row.symbol ?? ''
     if (!raw.endsWith('USDT')) continue
     setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'Binance', BINANCE_FEE)
   }
-
-  // 2) MEXC fallback เฉพาะเหรียญที่ Binance ไม่มี และไม่ใช่เหรียญบังคับ Coinbase
   for (const row of mexc ?? []) {
     const raw = row.symbol ?? ''
     if (!raw.endsWith('USDT')) continue
     setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'MEXC', MEXC_FEE)
   }
-
-  // 3) Gate.io fallback เฉพาะเหรียญที่ Binance/MEXC ไม่มี และไม่ใช่เหรียญบังคับ Coinbase
   for (const row of gate ?? []) {
     const pair = row.currency_pair ?? ''
     if (!pair.endsWith('_USDT')) continue
     setByPriority(out, wanted, pair.split('_')[0], row.lowest_ask, row.highest_bid, 'Gate.io', GATE_FEE)
   }
-
-  // 4) Coinbase ใช้เฉพาะ IOTX, PERP, L3, ABT เท่านั้น และบังคับ override เป็น Coinbase
   for (const row of coinbaseTickers) {
     const ask = firstNum(row.data?.ask, row.data?.price)
     const bid = firstNum(row.data?.bid, row.data?.price)
@@ -241,12 +294,20 @@ export async function GET(request: NextRequest) {
   const gapExtToBk = clamp(q.get('gapExtToBk'), DEFAULT_GAP_EXT_TO_BK, 0, 100)
   const specialGaps = parseGaps(q.get('specialGaps'), logs)
 
-  const bkTicker = await j<Record<string, Record<string, unknown>>>('https://api.bitkub.com/api/market/ticker', 3500, logs)
+  const [bkTicker, bkSymbolData] = await Promise.all([
+    j<Record<string, Record<string, unknown>>>('https://api.bitkub.com/api/market/ticker', 3500, logs),
+    j<{ error?: number; result?: BitkubSymbolInfo[] }>('https://api.bitkub.com/api/v3/market/symbols', 3500, logs),
+  ])
   const usdtThb = firstNum(bkTicker?.THB_USDT?.highestBid, bkTicker?.THB_USDT?.last)
 
   if (!bkTicker || !usdtThb) {
-    return NextResponse.json({ ok: false, ts: Date.now(), latencyMs: Date.now() - started, usdtThb: usdtThb ?? null, rows: [], logs: ['Bitkub ticker or USDT price unavailable', ...logs] }, { headers: { 'Cache-Control': 'no-store' } })
+    return NextResponse.json({ ok: false, ts: Date.now(), latencyMs: Date.now() - started, usdtThb: usdtThb ?? null, rows: [], topGainers: [], topVolumes: [], logs: ['Bitkub ticker or USDT price unavailable', ...logs] }, { headers: { 'Cache-Control': 'no-store' } })
   }
+
+  const symbolInfo = buildSymbolInfoMap(bkSymbolData)
+  const { topGainers, topVolumes, brokerExcluded, unknownExcluded } = buildTop24hLists(bkTicker, symbolInfo)
+  if (!bkSymbolData || bkSymbolData.error !== 0) logs.push('Bitkub symbols unavailable: 24H modes require source=exchange and may be empty')
+  logs.push(`24H exchange-only lists: gainers=${topGainers.length}, volumes=${topVolumes.length}, broker excluded=${brokerExcluded}, unknown excluded=${unknownExcluded}`)
 
   const bitkubSymbols = Object.keys(bkTicker)
     .filter(market => market.startsWith('THB_') && market !== 'THB_USDT')
@@ -273,11 +334,7 @@ export async function GET(request: NextRequest) {
     const extToBkPct = gap(bkSell, extAskThb)
     const targetBkToExt = specialGaps[symbol] ?? gapBkToExt
     const targetExtToBk = specialGaps[symbol] ?? gapExtToBk
-    rows.push({
-      symbol, bkSymbol, source: ext.source, extFee: ext.fee, targetBkToExt, targetExtToBk, bkAsk, bkBid, extAskThb, extBidThb,
-      bkToExtPct, extToBkPct, bestPct: Math.max(bkToExtPct, extToBkPct),
-      bestDirection: bkToExtPct >= extToBkPct ? `Buy BK → Sell ${ext.source}` : `Buy ${ext.source} → Sell BK`,
-    })
+    rows.push({ symbol, bkSymbol, source: ext.source, extFee: ext.fee, targetBkToExt, targetExtToBk, bkAsk, bkBid, extAskThb, extBidThb, bkToExtPct, extToBkPct, bestPct: Math.max(bkToExtPct, extToBkPct), bestDirection: bkToExtPct >= extToBkPct ? `Buy BK → Sell ${ext.source}` : `Buy ${ext.source} → Sell BK` })
   }
 
   const likely = rows.filter(r => r.bkToExtPct >= r.targetBkToExt || r.extToBkPct >= r.targetExtToBk).sort((a, b) => b.bestPct - a.bestPct).slice(0, 50)
@@ -314,6 +371,9 @@ export async function GET(request: NextRequest) {
     usdtThb,
     config: { minBitkubVolumeThb: minBkVol, externalVwapCheckThb: extVol, defaultGapBkToExt: gapBkToExt, defaultGapExtToBk: gapExtToBk },
     rows: sorted,
+    topGainers,
+    topVolumes,
+    brokerExcluded24h: brokerExcluded,
     logs: logs.slice(-80),
   }, { headers: { 'Cache-Control': 'no-store' } })
 }
