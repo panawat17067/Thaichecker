@@ -38,7 +38,10 @@ type TopMarketRow = {
   bkBid: number
   percentChange: number
   quoteVolume: number
-  baseVolume: number
+  avg30dayVolume: number | null
+  median30dayVolume: number | null
+  mean30dayVolume: number | null
+  historyDays: number
 }
 
 type ScanResponse = {
@@ -123,6 +126,10 @@ function modeButton(active: boolean, label: string, onClick: () => void) {
       {label}
     </button>
   )
+}
+
+function volumeText(value: number | null | undefined) {
+  return value ? volFmt.format(value) : '-'
 }
 
 export default function ArbitragePage() {
@@ -211,7 +218,6 @@ export default function ArbitragePage() {
     return (source ?? []).filter((row) => !q || row.symbol.includes(q) || row.name.toUpperCase().includes(q)).slice(0, 80)
   }, [data?.topGainers, data?.topVolumes, query, viewMode])
 
-  const verifiedCount = rows.filter((row) => row.verifiedBkToExt || row.verifiedExtToBk).length
   const updatedAt = data?.ts ? new Date(data.ts).toLocaleTimeString() : '-'
   const topGainer = data?.topGainers?.[0]
   const topVolume = data?.topVolumes?.[0]
@@ -224,7 +230,7 @@ export default function ArbitragePage() {
             <div>
               <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">Vercel Arbitrage Monitor</p>
               <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Bitkub Gap Real-time</h1>
-              <p className="mt-1 text-sm text-slate-400">เปิดหน้าเว็บเมื่อไหร่ค่อยสแกน · Top 24H ตัด broker coin ออก</p>
+              <p className="mt-1 text-sm text-slate-400">เปิดหน้าเว็บเมื่อไหร่ค่อยสแกน · Top 24H ตัด broker coin ออก · Avg30D = median 70% + mean 30%</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="rounded-full border border-slate-700 bg-slate-950 px-3 py-1.5">USDT/THB: {data?.usdtThb ? fmt.format(data.usdtThb) : '-'}</span>
@@ -314,17 +320,17 @@ export default function ArbitragePage() {
         ) : (
           <section className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/80 shadow-2xl shadow-black/30">
             <div className="border-b border-slate-800 bg-slate-950/60 px-4 py-3 text-sm text-slate-300">
-              {viewMode === 'gainers' ? 'Top 24H % Gainer' : 'Top 24H Volume'} · exchange coin only · broker excluded {data?.brokerExcluded24h ?? 0}
+              {viewMode === 'gainers' ? 'Top 24H % Gainer' : 'Top 24H Volume'} · exchange coin only · broker excluded {data?.brokerExcluded24h ?? 0} · Avg30D = median 70% + mean 30%
             </div>
             <div className="overflow-x-auto">
-              <table className="min-w-[920px] w-full text-left text-sm">
+              <table className="min-w-[980px] w-full text-left text-sm">
                 <thead className="border-b border-slate-800 bg-slate-950/80 text-xs uppercase tracking-wide text-slate-400">
                   <tr>
                     <th className="px-4 py-3">Rank</th>
                     <th className="px-4 py-3">Coin</th>
                     <th className="px-4 py-3">24H %</th>
                     <th className="px-4 py-3">24H Volume THB</th>
-                    <th className="px-4 py-3">Base Vol</th>
+                    <th className="px-4 py-3">Avg30D Vol</th>
                     <th className="px-4 py-3">Last</th>
                     <th className="px-4 py-3">Bid / Ask</th>
                   </tr>
@@ -336,7 +342,10 @@ export default function ArbitragePage() {
                       <td className="px-4 py-3"><div className="font-bold text-white">{row.symbol}</div><div className="text-xs text-slate-500">{row.name || row.bkSymbol} · {row.marketSource}</div></td>
                       <td className={`px-4 py-3 font-bold ${pctClass(row.percentChange)}`}>{pctFmt.format(row.percentChange)}%</td>
                       <td className="px-4 py-3 font-semibold">{volFmt.format(row.quoteVolume)}</td>
-                      <td className="px-4 py-3">{fmt.format(row.baseVolume)}</td>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold">{volumeText(row.avg30dayVolume)}</div>
+                        <div className="text-[11px] text-slate-500">med {volumeText(row.median30dayVolume)} / avg {volumeText(row.mean30dayVolume)} · {row.historyDays || 0}d</div>
+                      </td>
                       <td className="px-4 py-3">{fmt.format(row.last)}</td>
                       <td className="px-4 py-3 text-xs text-slate-300">{fmt.format(row.bkBid)} / {fmt.format(row.bkAsk)}</td>
                     </tr>
