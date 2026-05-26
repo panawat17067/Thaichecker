@@ -37,18 +37,17 @@ const DEFAULT_MIN_BK_VOL = 2000
 const DEFAULT_EXT_VOL = 3000
 const DEFAULT_GAP_BK_TO_EXT = 1.3
 const DEFAULT_GAP_EXT_TO_BK = 1.5
-const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR'])
-const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'OMNI', 'PERP', 'L3', 'ABT'])
+const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR', 'OMNI'])
+const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'PERP', 'L3', 'ABT'])
 const COINBASE_PRODUCT_IDS: Record<string, string> = {
   IOTX: 'IOTX-USD',
-  OMNI: 'OMNI-USD',
   PERP: 'PERP-USD',
   L3: 'L3-USD',
   ABT: 'ABT-USD',
 }
 const SPECIAL_GAPS: Record<string, number> = {
   ZIL: 1.0, DOGE: 1.0, ETH: 1.0, ALPHA: 1.5, LUNC: 1.3, SQD: 2, MNT: 0.7, ZENT: 2.2,
-  SNX: 2.0, AXS: 2.0, OMNI: 3.0, SPEC: 5.0, LYX: 3.0, ADA: 2.1, XMN: 3.3,
+  SNX: 2.0, AXS: 2.0, SPEC: 5.0, LYX: 3.0, ADA: 2.1, XMN: 3.3,
   MBX: 2.0, PYTH: 2.0, ORDER: 2.0, APT: 2.0, SIX: 15.0, PLN: 3.0, ABT: 2.0, L3: 2,
   TRAC: 3.0, UMA: 3.0, SUI: 2.0, ASP: 1.5, WOO: 2.0, HNT: 3.0, SAND: 2.0, CTXC: 20,
   BENQI: 2, XAUT: 1, PLUME: 1.5, RECALL: 1.3, HEMI: 2.3, EL: 5, PENGU: 0.8, BONK: 0.8,
@@ -221,7 +220,7 @@ async function externalBooks(bitkubSymbols: string[], logs: string[]) {
     setByPriority(out, wanted, pair.split('_')[0], row.lowest_ask, row.highest_bid, 'Gate.io', GATE_FEE)
   }
 
-  // 4) Coinbase ใช้เฉพาะ IOTX, OMNI, PERP, L3, ABT เท่านั้น และบังคับ override เป็น Coinbase
+  // 4) Coinbase ใช้เฉพาะ IOTX, PERP, L3, ABT เท่านั้น และบังคับ override เป็น Coinbase
   for (const row of coinbaseTickers) {
     const ask = firstNum(row.data?.ask, row.data?.price)
     const bid = firstNum(row.data?.bid, row.data?.price)
