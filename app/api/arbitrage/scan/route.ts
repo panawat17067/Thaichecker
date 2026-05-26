@@ -44,7 +44,6 @@ type TopMarketRow = {
   mean30dayVolume: number | null
   historyDays: number
 }
-type TradingViewHistory = { s?: string; c?: unknown[]; v?: unknown[] }
 
 const BITKUB_FEE = 0.0025
 const BINANCE_FEE = 0.001
@@ -56,7 +55,6 @@ const DEFAULT_EXT_VOL = 3000
 const DEFAULT_GAP_BK_TO_EXT = 1.3
 const DEFAULT_GAP_EXT_TO_BK = 1.5
 const TOP_MARKET_LIMIT = 50
-const AVG30D_ENRICH_LIMIT = 40
 const DO_NOT_CHECK = new Set(['NEIRO', 'GT', 'ELIZAOS', 'CLEAR', 'OMNI'])
 const FORCE_COINBASE_SYMBOLS = new Set(['IOTX', 'PERP', 'L3', 'ABT'])
 const COINBASE_PRODUCT_IDS: Record<string, string> = { IOTX: 'IOTX-USD', PERP: 'PERP-USD', L3: 'L3-USD', ABT: 'ABT-USD' }
@@ -82,12 +80,6 @@ function firstFinite(...values: unknown[]) { for (const v of values) { const x =
 function clamp(raw: string | null, fallback: number, min: number, max: number) { const x = Number(raw); return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback }
 function gap(sell: number, buy: number) { return ((sell - buy) / buy) * 100 }
 function coinbaseProductId(symbol: string) { const s = clean(symbol); return COINBASE_PRODUCT_IDS[s] ?? `${s}-USD` }
-function median(values: number[]) {
-  if (values.length === 0) return null
-  const sorted = [...values].sort((a, b) => a - b)
-  const mid = Math.floor(sorted.length / 2)
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-}
 
 async function j<T>(url: string, timeoutMs: number, logs: string[]): Promise<T | null> {
   const controller = new AbortController()
@@ -173,21 +165,7 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
     const quoteVolume = firstNum(bk.quoteVolume, bk.quote_volume, bk.volumeQuote, bk.volume_quote)
     if (!last || !bkAsk || !bkBid || percentChange === null || !quoteVolume) continue
 
-    rows.push({
-      symbol,
-      bkSymbol,
-      name: info.name || symbol,
-      marketSource: info.source,
-      last,
-      bkAsk,
-      bkBid,
-      percentChange,
-      quoteVolume,
-      avg30dayVolume: null,
-      median30dayVolume: null,
-      mean30dayVolume: null,
-      historyDays: 0,
-    })
+    rows.push({ symbol, bkSymbol, name: info.name || symbol, marketSource: info.source, last, bkAsk, bkBid, percentChange, quoteVolume, avg30dayVolume: null, median30dayVolume: null, mean30dayVolume: null, historyDays: 0 })
   }
 
   return {
@@ -196,56 +174,6 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
     brokerExcluded,
     unknownExcluded,
   }
-}
-
-async function getHistory(symbol: string, fromSec: number, nowSec: number, logs: string[]) {
-  const url = `https://api.bitkub.com/tradingview/history?symbol=${encodeURIComponent(symbol)}&resolution=1D&from=${fromSec}&to=${nowSec}`
-  const data = await j<TradingViewHistory>(url, 1200, logs)
-  if (data?.s === 'ok' && (data.v?.length ?? 0) > 0) return data
-  return null
-}
-
-async function fetchWeighted30dayVolume(row: TopMarketRow, logs: string[]) {
-  const nowSec = Math.floor(Date.now() / 1000)
-  const fromSec = nowSec - 35 * 24 * 60 * 60
-  const bkSymbol = toBk(row.symbol)
-  const data = await getHistory(`${bkSymbol}_THB`, fromSec, nowSec, logs) ?? await getHistory(`THB_${bkSymbol}`, fromSec, nowSec, logs)
-  const closes = data?.c ?? []
-  const volumes = data?.v ?? []
-  const dailyThbVolumes: number[] = []
-
-  for (let i = Math.max(0, volumes.length - 30); i < volumes.length; i += 1) {
-    const close = n(closes[i])
-    const volume = n(volumes[i])
-    if (!close || !volume) continue
-    dailyThbVolumes.push(close * volume)
-  }
-
-  const medianVol = median(dailyThbVolumes)
-  if (!medianVol || dailyThbVolumes.length === 0) return null
-  const meanVol = dailyThbVolumes.reduce((sum, value) => sum + value, 0) / dailyThbVolumes.length
-  return {
-    avg30dayVolume: medianVol * 0.7 + meanVol * 0.3,
-    median30dayVolume: medianVol,
-    mean30dayVolume: meanVol,
-    historyDays: dailyThbVolumes.length,
-  }
-}
-
-async function enrichTopRowsWith30dayVolume(topGainers: TopMarketRow[], topVolumes: TopMarketRow[], logs: string[]) {
-  const unique = new Map<string, TopMarketRow>()
-  for (const row of [...topGainers.slice(0, AVG30D_ENRICH_LIMIT), ...topVolumes.slice(0, AVG30D_ENRICH_LIMIT)]) unique.set(row.symbol, row)
-  let enriched = 0
-  await mapLimit([...unique.values()], 14, async row => {
-    const stat = await fetchWeighted30dayVolume(row, logs)
-    if (!stat) return
-    row.avg30dayVolume = stat.avg30dayVolume
-    row.median30dayVolume = stat.median30dayVolume
-    row.mean30dayVolume = stat.mean30dayVolume
-    row.historyDays = stat.historyDays
-    enriched += 1
-  })
-  logs.push(`30D weighted volume enriched: ${enriched}/${unique.size} rows (median 70%, mean 30%)`)
 }
 
 function calcVwap(levels: [unknown, unknown][], usdtThb: number, targetThb: number) {
@@ -325,7 +253,6 @@ function setCoinbaseForced(out: Map<string, ExtBook>, wanted: Set<string>, symbo
 async function externalBooks(bitkubSymbols: string[], logs: string[]) {
   const wanted = new Set(bitkubSymbols.map(clean).filter(Boolean))
   const out = new Map<string, ExtBook>()
-
   const forcedCoinbase = [...wanted].filter(symbol => FORCE_COINBASE_SYMBOLS.has(symbol))
   const [binance, mexc, gate, coinbaseTickers] = await Promise.all([
     j<Array<{ symbol?: string; askPrice?: string; bidPrice?: string }>>('https://api.binance.com/api/v3/ticker/bookTicker', 3500, logs),
@@ -334,27 +261,14 @@ async function externalBooks(bitkubSymbols: string[], logs: string[]) {
     Promise.all(forcedCoinbase.map(async symbol => ({ symbol, data: await j<{ ask?: string; bid?: string; price?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/ticker`, 2500, logs) }))),
   ])
 
-  for (const row of binance ?? []) {
-    const raw = row.symbol ?? ''
-    if (!raw.endsWith('USDT')) continue
-    setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'Binance', BINANCE_FEE)
-  }
-  for (const row of mexc ?? []) {
-    const raw = row.symbol ?? ''
-    if (!raw.endsWith('USDT')) continue
-    setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'MEXC', MEXC_FEE)
-  }
-  for (const row of gate ?? []) {
-    const pair = row.currency_pair ?? ''
-    if (!pair.endsWith('_USDT')) continue
-    setByPriority(out, wanted, pair.split('_')[0], row.lowest_ask, row.highest_bid, 'Gate.io', GATE_FEE)
-  }
+  for (const row of binance ?? []) { const raw = row.symbol ?? ''; if (raw.endsWith('USDT')) setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'Binance', BINANCE_FEE) }
+  for (const row of mexc ?? []) { const raw = row.symbol ?? ''; if (raw.endsWith('USDT')) setByPriority(out, wanted, raw.slice(0, -4), row.askPrice, row.bidPrice, 'MEXC', MEXC_FEE) }
+  for (const row of gate ?? []) { const pair = row.currency_pair ?? ''; if (pair.endsWith('_USDT')) setByPriority(out, wanted, pair.split('_')[0], row.lowest_ask, row.highest_bid, 'Gate.io', GATE_FEE) }
   for (const row of coinbaseTickers) {
     const ask = firstNum(row.data?.ask, row.data?.price)
     const bid = firstNum(row.data?.bid, row.data?.price)
     setCoinbaseForced(out, wanted, row.symbol, ask, bid)
   }
-
   logs.push(`Bitkub symbols checked: ${wanted.size}, external matched: ${out.size}, forced Coinbase: ${forcedCoinbase.join(',') || '-'}`)
   return out
 }
@@ -374,22 +288,15 @@ export async function GET(request: NextRequest) {
     j<{ error?: number; result?: BitkubSymbolInfo[] }>('https://api.bitkub.com/api/v3/market/symbols', 3500, logs),
   ])
   const usdtThb = firstNum(bkTicker?.THB_USDT?.highestBid, bkTicker?.THB_USDT?.last)
-
-  if (!bkTicker || !usdtThb) {
-    return NextResponse.json({ ok: false, ts: Date.now(), latencyMs: Date.now() - started, usdtThb: usdtThb ?? null, rows: [], topGainers: [], topVolumes: [], logs: ['Bitkub ticker or USDT price unavailable', ...logs] }, { headers: { 'Cache-Control': 'no-store' } })
-  }
+  if (!bkTicker || !usdtThb) return NextResponse.json({ ok: false, ts: Date.now(), latencyMs: Date.now() - started, usdtThb: usdtThb ?? null, rows: [], topGainers: [], topVolumes: [], logs: ['Bitkub ticker or USDT price unavailable', ...logs] }, { headers: { 'Cache-Control': 'no-store' } })
 
   const symbolInfo = buildSymbolInfoMap(bkSymbolData)
   const { topGainers, topVolumes, brokerExcluded, unknownExcluded } = buildTop24hLists(bkTicker, symbolInfo)
   if (!bkSymbolData || bkSymbolData.error !== 0) logs.push('Bitkub symbols unavailable: 24H modes require source=exchange and may be empty')
   logs.push(`24H exchange-only lists: gainers=${topGainers.length}, volumes=${topVolumes.length}, broker excluded=${brokerExcluded}, unknown excluded=${unknownExcluded}`)
-  await enrichTopRowsWith30dayVolume(topGainers, topVolumes, logs)
+  logs.push('Avg30D is loaded separately and cached; scan does not call tradingview/history')
 
-  const bitkubSymbols = Object.keys(bkTicker)
-    .filter(market => market.startsWith('THB_') && market !== 'THB_USDT')
-    .map(market => toStd(clean(market.split('_')[1])))
-    .filter(symbol => symbol && !DO_NOT_CHECK.has(symbol))
-
+  const bitkubSymbols = Object.keys(bkTicker).filter(market => market.startsWith('THB_') && market !== 'THB_USDT').map(market => toStd(clean(market.split('_')[1]))).filter(symbol => symbol && !DO_NOT_CHECK.has(symbol))
   const extMap = await externalBooks(bitkubSymbols, logs)
   const rows: Row[] = []
   for (const [market, bk] of Object.entries(bkTicker)) {
@@ -420,10 +327,11 @@ export async function GET(request: NextRequest) {
       if (bk) {
         const buy = bk.price * (1 + BITKUB_FEE)
         const v = await sourceVwap(row.symbol, row.source, 'bids', usdtThb, extVol, logs)
-        if (!v) return
-        const sell = v.priceThb * (1 - row.extFee)
-        const pct = gap(sell, buy)
-        if (pct >= row.targetBkToExt) row.verifiedBkToExt = { pct, buy, sell, bitkubVolumeThb: bk.volumeThb, externalVwapVolumeThb: v.volumeThb }
+        if (v) {
+          const sell = v.priceThb * (1 - row.extFee)
+          const pct = gap(sell, buy)
+          if (pct >= row.targetBkToExt) row.verifiedBkToExt = { pct, buy, sell, bitkubVolumeThb: bk.volumeThb, externalVwapVolumeThb: v.volumeThb }
+        }
       }
     }
     if (row.extToBkPct >= row.targetExtToBk) {
@@ -431,25 +339,15 @@ export async function GET(request: NextRequest) {
       if (bk) {
         const sell = bk.price * (1 - BITKUB_FEE)
         const v = await sourceVwap(row.symbol, row.source, 'asks', usdtThb, extVol, logs)
-        if (!v) return
-        const buy = v.priceThb * (1 + row.extFee)
-        const pct = gap(sell, buy)
-        if (pct >= row.targetExtToBk) row.verifiedExtToBk = { pct, buy, sell, bitkubVolumeThb: bk.volumeThb, externalVwapVolumeThb: v.volumeThb }
+        if (v) {
+          const buy = v.priceThb * (1 + row.extFee)
+          const pct = gap(sell, buy)
+          if (pct >= row.targetExtToBk) row.verifiedExtToBk = { pct, buy, sell, bitkubVolumeThb: bk.volumeThb, externalVwapVolumeThb: v.volumeThb }
+        }
       }
     }
   })
 
   const sorted = rows.sort((a, b) => Math.max(b.verifiedBkToExt?.pct ?? b.bkToExtPct, b.verifiedExtToBk?.pct ?? b.extToBkPct) - Math.max(a.verifiedBkToExt?.pct ?? a.bkToExtPct, a.verifiedExtToBk?.pct ?? a.extToBkPct))
-  return NextResponse.json({
-    ok: true,
-    ts: Date.now(),
-    latencyMs: Date.now() - started,
-    usdtThb,
-    config: { minBitkubVolumeThb: minBkVol, externalVwapCheckThb: extVol, defaultGapBkToExt: gapBkToExt, defaultGapExtToBk: gapExtToBk },
-    rows: sorted,
-    topGainers,
-    topVolumes,
-    brokerExcluded24h: brokerExcluded,
-    logs: logs.slice(-80),
-  }, { headers: { 'Cache-Control': 'no-store' } })
+  return NextResponse.json({ ok: true, ts: Date.now(), latencyMs: Date.now() - started, usdtThb, config: { minBitkubVolumeThb: minBkVol, externalVwapCheckThb: extVol, defaultGapBkToExt: gapBkToExt, defaultGapExtToBk: gapExtToBk }, rows: sorted, topGainers, topVolumes, brokerExcluded24h: brokerExcluded, logs: logs.slice(-80) }, { headers: { 'Cache-Control': 'no-store' } })
 }
