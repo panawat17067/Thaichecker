@@ -10,40 +10,9 @@ type Source = 'Binance' | 'MEXC' | 'Gate.io' | 'Coinbase'
 type MarketSource = 'exchange' | 'broker' | string
 type ExtBook = { ask: number; bid: number; source: Source; fee: number }
 type Verified = { pct: number; buy: number; sell: number; bitkubVolumeThb: number; externalVwapVolumeThb: number }
-type Row = {
-  symbol: string
-  bkSymbol: string
-  source: Source
-  extFee: number
-  targetBkToExt: number
-  targetExtToBk: number
-  bkAsk: number
-  bkBid: number
-  extAskThb: number
-  extBidThb: number
-  bkToExtPct: number
-  extToBkPct: number
-  bestPct: number
-  bestDirection: string
-  verifiedBkToExt?: Verified
-  verifiedExtToBk?: Verified
-}
+type Row = { symbol: string; bkSymbol: string; source: Source; extFee: number; targetBkToExt: number; targetExtToBk: number; bkAsk: number; bkBid: number; extAskThb: number; extBidThb: number; bkToExtPct: number; extToBkPct: number; bestPct: number; bestDirection: string; verifiedBkToExt?: Verified; verifiedExtToBk?: Verified }
 type BitkubSymbolInfo = { base_asset?: string; name?: string; source?: MarketSource; symbol?: string }
-type TopMarketRow = {
-  symbol: string
-  bkSymbol: string
-  name: string
-  marketSource: MarketSource
-  last: number
-  bkAsk: number
-  bkBid: number
-  percentChange: number
-  quoteVolume: number
-  avg30dayVolume: number | null
-  median30dayVolume: number | null
-  mean30dayVolume: number | null
-  historyDays: number
-}
+type TopMarketRow = { symbol: string; bkSymbol: string; name: string; marketSource: MarketSource; last: number; bkAsk: number; bkBid: number; percentChange: number; quoteVolume: number; avg30dayVolume: number | null; median30dayVolume: number | null; mean30dayVolume: number | null; historyDays: number }
 
 const BITKUB_FEE = 0.0025
 const BINANCE_FEE = 0.001
@@ -80,6 +49,7 @@ function firstFinite(...values: unknown[]) { for (const v of values) { const x =
 function clamp(raw: string | null, fallback: number, min: number, max: number) { const x = Number(raw); return Number.isFinite(x) ? Math.max(min, Math.min(max, x)) : fallback }
 function gap(sell: number, buy: number) { return ((sell - buy) / buy) * 100 }
 function coinbaseProductId(symbol: string) { const s = clean(symbol); return COINBASE_PRODUCT_IDS[s] ?? `${s}-USD` }
+function normalizedSource(value: unknown) { return String(value ?? '').trim().toLowerCase() }
 
 async function j<T>(url: string, timeoutMs: number, logs: string[]): Promise<T | null> {
   const controller = new AbortController()
@@ -155,8 +125,9 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
     if (!symbol || DO_NOT_CHECK.has(symbol)) continue
 
     const info = symbolInfo.get(symbol)
-    if (info?.source === 'broker') { brokerExcluded += 1; continue }
-    if (info?.source !== 'exchange') { unknownExcluded += 1; continue }
+    const source = normalizedSource(info?.source)
+    if (source === 'broker') { brokerExcluded += 1; continue }
+    if (!source) unknownExcluded += 1
 
     const last = firstNum(bk.last, bk.lastPrice, bk.last_price)
     const bkAsk = firstNum(bk.lowestAsk, bk.lowest_ask, bk.ask)
@@ -165,15 +136,10 @@ function buildTop24hLists(bkTicker: Record<string, Record<string, unknown>>, sym
     const quoteVolume = firstNum(bk.quoteVolume, bk.quote_volume, bk.volumeQuote, bk.volume_quote)
     if (!last || !bkAsk || !bkBid || percentChange === null || !quoteVolume) continue
 
-    rows.push({ symbol, bkSymbol, name: info.name || symbol, marketSource: info.source, last, bkAsk, bkBid, percentChange, quoteVolume, avg30dayVolume: null, median30dayVolume: null, mean30dayVolume: null, historyDays: 0 })
+    rows.push({ symbol, bkSymbol, name: info?.name || symbol, marketSource: info?.source ?? 'unknown', last, bkAsk, bkBid, percentChange, quoteVolume, avg30dayVolume: null, median30dayVolume: null, mean30dayVolume: null, historyDays: 0 })
   }
 
-  return {
-    topGainers: [...rows].sort((a, b) => b.percentChange - a.percentChange).slice(0, TOP_MARKET_LIMIT),
-    topVolumes: [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, TOP_MARKET_LIMIT),
-    brokerExcluded,
-    unknownExcluded,
-  }
+  return { topGainers: [...rows].sort((a, b) => b.percentChange - a.percentChange).slice(0, TOP_MARKET_LIMIT), topVolumes: [...rows].sort((a, b) => b.quoteVolume - a.quoteVolume).slice(0, TOP_MARKET_LIMIT), brokerExcluded, unknownExcluded }
 }
 
 function calcVwap(levels: [unknown, unknown][], usdtThb: number, targetThb: number) {
@@ -209,67 +175,25 @@ async function verifyBk(symbol: string, side: Side, minVol: number, logs: string
   return null
 }
 
-async function binanceVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) {
-  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.binance.com/api/v3/depth?symbol=${clean(symbol)}USDT&limit=50`, 2500, logs)
-  return calcVwap(data?.[side] ?? [], usdtThb, target)
-}
-
-async function mexcVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) {
-  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.mexc.com/api/v3/depth?symbol=${clean(symbol)}USDT&limit=50`, 2500, logs)
-  return calcVwap(data?.[side] ?? [], usdtThb, target)
-}
-
-async function gateVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) {
-  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.gateio.ws/api/v4/spot/order_book?currency_pair=${clean(symbol)}_USDT&limit=50`, 2500, logs)
-  return calcVwap(data?.[side] ?? [], usdtThb, target)
-}
-
-async function coinbaseVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) {
-  const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/book?level=2`, 2500, logs)
-  return calcVwap(data?.[side] ?? [], usdtThb, target)
-}
-
-async function sourceVwap(symbol: string, source: Source, side: Side, usdtThb: number, target: number, logs: string[]) {
-  if (source === 'Binance') return binanceVwap(symbol, side, usdtThb, target, logs)
-  if (source === 'MEXC') return mexcVwap(symbol, side, usdtThb, target, logs)
-  if (source === 'Gate.io') return gateVwap(symbol, side, usdtThb, target, logs)
-  return coinbaseVwap(symbol, side, usdtThb, target, logs)
-}
-
-function thresholdFor(symbol: string, custom: Record<string, number>, side: 'bkToExt' | 'extToBk', fallback: number) {
-  const specific = custom[clean(symbol)]
-  if (!specific) return fallback
-  return side === 'bkToExt' ? Math.min(specific, fallback) : Math.max(specific, fallback)
-}
+async function binanceVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) { const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.binance.com/api/v3/depth?symbol=${clean(symbol)}USDT&limit=50`, 2500, logs); return calcVwap(data?.[side] ?? [], usdtThb, target) }
+async function mexcVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) { const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.mexc.com/api/v3/depth?symbol=${clean(symbol)}USDT&limit=50`, 2500, logs); return calcVwap(data?.[side] ?? [], usdtThb, target) }
+async function gateVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) { const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.gateio.ws/api/v4/spot/order_book?currency_pair=${clean(symbol)}_USDT&limit=50`, 2500, logs); return calcVwap(data?.[side] ?? [], usdtThb, target) }
+async function coinbaseVwap(symbol: string, side: Side, usdtThb: number, target: number, logs: string[]) { const data = await j<Record<Side, [unknown, unknown][]>>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(symbol)}/book?level=2`, 2500, logs); return calcVwap(data?.[side] ?? [], usdtThb, target) }
+async function sourceVwap(symbol: string, source: Source, side: Side, usdtThb: number, target: number, logs: string[]) { if (source === 'Binance') return binanceVwap(symbol, side, usdtThb, target, logs); if (source === 'MEXC') return mexcVwap(symbol, side, usdtThb, target, logs); if (source === 'Gate.io') return gateVwap(symbol, side, usdtThb, target, logs); return coinbaseVwap(symbol, side, usdtThb, target, logs) }
+function thresholdFor(symbol: string, custom: Record<string, number>, side: 'bkToExt' | 'extToBk', fallback: number) { const specific = custom[clean(symbol)]; if (!specific) return fallback; return side === 'bkToExt' ? Math.min(specific, fallback) : Math.max(specific, fallback) }
 
 async function extBook(symbol: string, source: Source, usdtThb: number, logs: string[]): Promise<ExtBook | null> {
   const s = clean(symbol)
-  if (source === 'Binance') {
-    const data = await j<{ askPrice?: string; bidPrice?: string }>(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${s}USDT`, 2500, logs)
-    const ask = n(data?.askPrice), bid = n(data?.bidPrice)
-    return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: BINANCE_FEE } : null
-  }
-  if (source === 'MEXC') {
-    const data = await j<{ askPrice?: string; bidPrice?: string }>(`https://api.mexc.com/api/v3/ticker/bookTicker?symbol=${s}USDT`, 2500, logs)
-    const ask = n(data?.askPrice), bid = n(data?.bidPrice)
-    return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: MEXC_FEE } : null
-  }
-  if (source === 'Gate.io') {
-    const data = await j<{ lowest_ask?: string; highest_bid?: string }>(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${s}_USDT`, 2500, logs)
-    const row = Array.isArray(data) ? data[0] : data
-    const ask = n(row?.lowest_ask), bid = n(row?.highest_bid)
-    return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: GATE_FEE } : null
-  }
-  const data = await j<{ best_ask?: string; best_bid?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(s)}/ticker`, 2500, logs)
-  const ask = n(data?.best_ask), bid = n(data?.best_bid)
-  return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: COINBASE_FEE } : null
+  if (source === 'Binance') { const data = await j<{ askPrice?: string; bidPrice?: string }>(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${s}USDT`, 2500, logs); const ask = n(data?.askPrice), bid = n(data?.bidPrice); return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: BINANCE_FEE } : null }
+  if (source === 'MEXC') { const data = await j<{ askPrice?: string; bidPrice?: string }>(`https://api.mexc.com/api/v3/ticker/bookTicker?symbol=${s}USDT`, 2500, logs); const ask = n(data?.askPrice), bid = n(data?.bidPrice); return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: MEXC_FEE } : null }
+  if (source === 'Gate.io') { const data = await j<{ lowest_ask?: string; highest_bid?: string }>(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${s}_USDT`, 2500, logs); const row = Array.isArray(data) ? data[0] : data; const ask = n(row?.lowest_ask), bid = n(row?.highest_bid); return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: GATE_FEE } : null }
+  const data = await j<{ best_ask?: string; best_bid?: string }>(`https://api.exchange.coinbase.com/products/${coinbaseProductId(s)}/ticker`, 2500, logs); const ask = n(data?.best_ask), bid = n(data?.best_bid); return ask && bid ? { ask: ask * usdtThb, bid: bid * usdtThb, source, fee: COINBASE_FEE } : null
 }
 
 async function getUsdtThb(logs: string[]) {
   const direct = await j<{ result?: Record<string, { last?: unknown }> }>('https://api.bitkub.com/api/market/ticker?sym=THB_USDT', 2500, logs)
   const directLast = firstNum(direct?.result?.THB_USDT?.last)
   if (directLast) return directLast
-
   const fallback = await j<{ result?: Record<string, { last?: unknown }> }>('https://api.bitkub.com/api/market/ticker', 3000, logs)
   return firstNum(fallback?.result?.THB_USDT?.last) ?? 36
 }
@@ -282,54 +206,33 @@ export async function GET(request: NextRequest) {
   const defaultGapBkToExt = clamp(request.nextUrl.searchParams.get('gapBkToExt'), DEFAULT_GAP_BK_TO_EXT, 0.1, 100)
   const defaultGapExtToBk = clamp(request.nextUrl.searchParams.get('gapExtToBk'), DEFAULT_GAP_EXT_TO_BK, 0.1, 100)
   const specialGaps = parseGaps(request.nextUrl.searchParams.get('specialGaps'), logs)
-
-  const [ticker, symbols, usdtThb] = await Promise.all([
-    j<{ result?: Record<string, Record<string, unknown>> }>('https://api.bitkub.com/api/market/ticker', 3000, logs),
-    j<{ error?: number; result?: BitkubSymbolInfo[] }>('https://api.bitkub.com/api/market/symbols', 3000, logs),
-    getUsdtThb(logs),
-  ])
-
+  const [ticker, symbols, usdtThb] = await Promise.all([j<{ result?: Record<string, Record<string, unknown>> }>('https://api.bitkub.com/api/market/ticker', 3000, logs), j<{ error?: number; result?: BitkubSymbolInfo[] }>('https://api.bitkub.com/api/market/symbols', 3000, logs), getUsdtThb(logs)])
   const symbolInfo = buildSymbolInfoMap(symbols)
   const topLists = buildTop24hLists(ticker?.result ?? {}, symbolInfo)
   const rows: Row[] = []
-
   if (!usdtThb) logs.push('USDT/THB fallback failed')
-  const candidates = Object.values(ticker?.result ?? {})
-    .map((bk) => {
-      const rawSymbol = clean((bk as { baseVolume?: unknown; symbol?: unknown }).symbol)
-      const bkSymbol = rawSymbol ? clean(String(rawSymbol).split('_').pop()) : ''
-      const symbol = toStd(bkSymbol)
-      return { bk, bkSymbol, symbol }
-    })
-    .filter((item) => item.bkSymbol && item.symbol && !DO_NOT_CHECK.has(item.symbol))
+
+  const candidates = Object.entries(ticker?.result ?? {}).map(([market, bk]) => {
+    const fromKey = market.startsWith('THB_') ? clean(market.split('_')[1]) : ''
+    const rawSymbol = clean((bk as { symbol?: unknown }).symbol)
+    const bkSymbol = fromKey || (rawSymbol ? clean(String(rawSymbol).split('_').pop()) : '')
+    return { bk, bkSymbol, symbol: toStd(bkSymbol) }
+  }).filter((item) => item.bkSymbol && item.symbol && !DO_NOT_CHECK.has(item.symbol))
 
   await mapLimit(candidates, 8, async ({ bk, bkSymbol, symbol }) => {
     const ask = firstNum((bk as Record<string, unknown>).lowestAsk, (bk as Record<string, unknown>).lowest_ask, (bk as Record<string, unknown>).ask)
     const bid = firstNum((bk as Record<string, unknown>).highestBid, (bk as Record<string, unknown>).highest_bid, (bk as Record<string, unknown>).bid)
     if (!ask || !bid || !usdtThb) return
-
     const sources: Source[] = FORCE_COINBASE_SYMBOLS.has(symbol) ? ['Coinbase'] : ['Binance', 'MEXC', 'Gate.io']
     const books = await Promise.all(sources.map((source) => extBook(symbol, source, usdtThb, logs)))
     for (const book of books) {
       if (!book) continue
-      const bkBuy = ask * (1 + BITKUB_FEE)
-      const bkSell = bid * (1 - BITKUB_FEE)
-      const extBuy = book.ask * (1 + book.fee)
-      const extSell = book.bid * (1 - book.fee)
-      const bkToExtPct = gap(extSell, bkBuy)
-      const extToBkPct = gap(bkSell, extBuy)
-      const targetBkToExt = thresholdFor(symbol, specialGaps, 'bkToExt', defaultGapBkToExt)
-      const targetExtToBk = thresholdFor(symbol, specialGaps, 'extToBk', defaultGapExtToBk)
+      const bkBuy = ask * (1 + BITKUB_FEE), bkSell = bid * (1 - BITKUB_FEE), extBuy = book.ask * (1 + book.fee), extSell = book.bid * (1 - book.fee)
+      const bkToExtPct = gap(extSell, bkBuy), extToBkPct = gap(bkSell, extBuy)
+      const targetBkToExt = thresholdFor(symbol, specialGaps, 'bkToExt', defaultGapBkToExt), targetExtToBk = thresholdFor(symbol, specialGaps, 'extToBk', defaultGapExtToBk)
       if (bkToExtPct < targetBkToExt && extToBkPct < targetExtToBk) continue
-
       const row: Row = { symbol, bkSymbol, source: book.source, extFee: book.fee, targetBkToExt, targetExtToBk, bkAsk: ask, bkBid: bid, extAskThb: book.ask, extBidThb: book.bid, bkToExtPct, extToBkPct, bestPct: Math.max(bkToExtPct, extToBkPct), bestDirection: bkToExtPct >= extToBkPct ? 'bkToExt' : 'extToBk' }
-      const [bkToExtBk, bkToExtExt, extToBkExt, extToBkBk] = await Promise.all([
-        bkToExtPct >= targetBkToExt ? verifyBk(symbol, 'asks', minBkVol, logs) : Promise.resolve(null),
-        bkToExtPct >= targetBkToExt ? sourceVwap(symbol, book.source, 'bids', usdtThb, extVol, logs) : Promise.resolve(null),
-        extToBkPct >= targetExtToBk ? sourceVwap(symbol, book.source, 'asks', usdtThb, extVol, logs) : Promise.resolve(null),
-        extToBkPct >= targetExtToBk ? verifyBk(symbol, 'bids', minBkVol, logs) : Promise.resolve(null),
-      ])
-
+      const [bkToExtBk, bkToExtExt, extToBkExt, extToBkBk] = await Promise.all([bkToExtPct >= targetBkToExt ? verifyBk(symbol, 'asks', minBkVol, logs) : Promise.resolve(null), bkToExtPct >= targetBkToExt ? sourceVwap(symbol, book.source, 'bids', usdtThb, extVol, logs) : Promise.resolve(null), extToBkPct >= targetExtToBk ? sourceVwap(symbol, book.source, 'asks', usdtThb, extVol, logs) : Promise.resolve(null), extToBkPct >= targetExtToBk ? verifyBk(symbol, 'bids', minBkVol, logs) : Promise.resolve(null)])
       if (bkToExtBk && bkToExtExt) row.verifiedBkToExt = { pct: gap(bkToExtExt.priceThb, bkToExtBk.price), buy: bkToExtBk.price, sell: bkToExtExt.priceThb, bitkubVolumeThb: bkToExtBk.volumeThb, externalVwapVolumeThb: bkToExtExt.volumeThb }
       if (extToBkExt && extToBkBk) row.verifiedExtToBk = { pct: gap(extToBkBk.price, extToBkExt.priceThb), buy: extToBkExt.priceThb, sell: extToBkBk.price, bitkubVolumeThb: extToBkBk.volumeThb, externalVwapVolumeThb: extToBkExt.volumeThb }
       rows.push(row)
