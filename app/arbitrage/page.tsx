@@ -86,22 +86,24 @@ export default function ArbitragePage() {
 
   useEffect(() => {
     const q = query.trim().toUpperCase()
+    const querySymbol = q.replace(/[^A-Z0-9]/g, '')
     const top10 = (data?.topGainers ?? []).slice(0, 10).map((row) => row.symbol)
+    const marketPool = [...(data?.topGainers ?? []), ...(data?.topVolumes ?? [])]
     const searched = q
-      ? (data?.topGainers ?? [])
+      ? marketPool
           .filter((row) => row.symbol.includes(q) || row.name.toUpperCase().includes(q))
           .map((row) => row.symbol)
       : []
-    const targets = Array.from(new Set([...top10, ...searched]))
+    const targets = Array.from(new Set([...(querySymbol ? [querySymbol] : []), ...searched, ...top10]))
     const missing = targets.filter((symbol) => !isFreshAvg(avg30d[symbol]))
-    if (missing.length === 0 || avgLoadingRef.current) return
+    if (missing.length === 0) return
     avgLoadingRef.current = true
     let cancelled = false
     ;(async () => {
       for (const symbol of missing) {
         if (cancelled) break
         try {
-          const res = await fetch(`/api/arbitrage/avg30d?symbol=${encodeURIComponent(symbol)}`, { cache: 'force-cache' })
+          const res = await fetch(`/api/arbitrage/avg30d?symbol=${encodeURIComponent(symbol)}`, { cache: 'no-store' })
           if (res.ok) {
             const json = await res.json() as { ok: boolean } & Avg30d
             if (json.ok && !cancelled) setAvg30d((cache) => ({ ...cache, [symbol]: { symbol, avg30dayVolume: json.avg30dayVolume, median30dayVolume: json.median30dayVolume, mean30dayVolume: json.mean30dayVolume, historyDays: json.historyDays, cachedAt: json.cachedAt || Date.now() } }))
@@ -113,12 +115,12 @@ export default function ArbitragePage() {
           const msg = err instanceof Error ? err.message : String(err)
           setLogs((items) => [`${new Date().toLocaleTimeString()} avg30d ${symbol}: ${msg}`, ...items].slice(0, 120))
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 3500))
+        if (!q) await new Promise((resolve) => window.setTimeout(resolve, 3500))
       }
       avgLoadingRef.current = false
     })()
     return () => { cancelled = true; avgLoadingRef.current = false }
-  }, [data?.topGainers, avg30d, query])
+  }, [data?.topGainers, data?.topVolumes, avg30d, query])
 
   const topGainersWithAvg = useMemo(() => (data?.topGainers ?? []).map((row, index) => {
     const stat = index < 10 || query.trim() ? avg30d[row.symbol] : undefined
